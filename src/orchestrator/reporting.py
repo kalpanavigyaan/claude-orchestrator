@@ -17,18 +17,21 @@ from .data_models import Task, TaskRunResult
 from .git_operations import get_recent_commit_log, is_git_repository
 from .logging_setup import get_logger
 
-REPORT_FILENAME_TEMPLATE = "orchestrator_run_{date}.md"
+REPORT_FILENAME_TEMPLATE = "orchestrator_run_{timestamp}.md"
+REPORT_FILENAME_GLOB = "orchestrator_run_*.md"
 
 
-def report_path_for_repository(repository_path: Path, now: datetime) -> Path:
-    """Return the dated orchestrator run-record path for a repository.
+def report_path_for_repository(repository_path: Path, run_timestamp: datetime) -> Path:
+    """Return the timestamped orchestrator run-record path for a repository.
 
-    This is the orchestrator's own audit file (``orchestrator_run_YYYYMMDD.md``), distinct
-    from the agent's ``REPORT_YYYYMMDD.md`` work report.
+    This is the orchestrator's own audit file
+    (``orchestrator_run_YYYYMMDD_HHMMSS.md``), distinct from the agent's
+    ``REPORT_YYYYMMDD.md`` work report. Including the time gives each run its own file.
 
     Args:
         repository_path: The repository whose run record is being written.
-        now: The current time, used to form the ``orchestrator_run_YYYYMMDD.md`` filename.
+        run_timestamp: The run's start time, used to form the
+            ``orchestrator_run_YYYYMMDD_HHMMSS.md`` filename.
 
     Returns:
         The path to the run-record file inside the repository.
@@ -36,10 +39,10 @@ def report_path_for_repository(repository_path: Path, now: datetime) -> Path:
     Example:
         >>> from datetime import datetime
         >>> from pathlib import Path
-        >>> report_path_for_repository(Path("E:/GitHub/app"), datetime(2026, 6, 13)).name
-        'orchestrator_run_20260613.md'
+        >>> report_path_for_repository(Path("E:/GitHub/app"), datetime(2026, 6, 13, 22, 30, 15)).name
+        'orchestrator_run_20260613_223015.md'
     """
-    filename = REPORT_FILENAME_TEMPLATE.format(date=now.strftime("%Y%m%d"))
+    filename = REPORT_FILENAME_TEMPLATE.format(timestamp=run_timestamp.strftime("%Y%m%d_%H%M%S"))
     return repository_path / filename
 
 
@@ -99,20 +102,28 @@ def build_report_section(task: Task, result: TaskRunResult, now: datetime) -> st
     return "\n".join(outcome_lines)
 
 
-def append_task_report(task: Task, result: TaskRunResult, now: datetime) -> Path | None:
-    """Append a run section to the repository's dated report file.
+def append_task_report(
+    task: Task,
+    result: TaskRunResult,
+    now: datetime,
+    run_timestamp: datetime | None = None,
+) -> Path | None:
+    """Append a task section to the orchestrator run-record file.
 
-    Creates the report file with a title header if it does not yet exist, then appends the
-    section for this run.
+    Creates the run-record file with a title header if it does not yet exist, then appends
+    the section for this task. The filename is derived from ``run_timestamp`` so that every
+    task in the same run is recorded in one ``orchestrator_run_YYYYMMDD_HHMMSS.md`` file,
+    while each section is stamped with its own ``now`` time.
 
     Args:
         task: The task that was run.
         result: The outcome of the run.
-        now: The time the report is written.
+        now: The time this section is written (used in the section heading).
+        run_timestamp: The run's start time, used for the filename. Defaults to ``now``.
 
     Returns:
-        The path to the report file, or ``None`` if the repository directory does not exist
-        (so nothing could be written).
+        The path to the run-record file, or ``None`` if the repository directory does not
+        exist (so nothing could be written).
 
     Example:
         >>> # path = append_task_report(task, result, datetime.now())
@@ -127,7 +138,7 @@ def append_task_report(task: Task, result: TaskRunResult, now: datetime) -> Path
         )
         return None
 
-    report_path = report_path_for_repository(task.repository_path, now)
+    report_path = report_path_for_repository(task.repository_path, run_timestamp or now)
     section_text = build_report_section(task, result, now)
 
     if not report_path.exists():

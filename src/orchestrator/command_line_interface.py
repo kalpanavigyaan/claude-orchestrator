@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from datetime import datetime
 from pathlib import Path
 
 import typer
@@ -28,7 +27,7 @@ from .discovery import DiscoveryError, discover_tasks
 from .git_operations import commit_all_changes, push_current_branch
 from .logging_setup import configure_logging, get_logger
 from .permissions import decide_tool_permission
-from .reporting import append_task_report, report_path_for_repository
+from .reporting import REPORT_FILENAME_GLOB, append_task_report
 from .scheduler import (
     current_time,
     is_within_window,
@@ -95,6 +94,7 @@ async def _execute_run(
     logger = get_logger()
     schedule = configuration.schedule
     usage_tracker = UsageTracker()
+    run_started_at = current_time(schedule)
 
     if not run_immediately:
         await wait_until_start(schedule)
@@ -123,7 +123,7 @@ async def _execute_run(
                 )
                 result = await run_single_task(mapped_task, run_configuration, now=now)
                 usage_tracker.record_task_result(result)
-                append_task_report(mapped_task, result, now)
+                append_task_report(mapped_task, result, now, run_timestamp=run_started_at)
 
                 push_enabled = (
                     task.push_override
@@ -262,21 +262,28 @@ def validate(
 
 @app.command()
 def report(
-    repository: str = typer.Argument(..., help="Path to the repository whose report to locate."),
+    repository: str = typer.Argument(..., help="Path to the repository whose run record to locate."),
 ) -> None:
-    """Locate today's report file for a repository and print its path and contents.
+    """Locate the most recent orchestrator run-record for a repository and print it.
+
+    Run records are named ``orchestrator_run_YYYYMMDD_HHMMSS.md``; this picks the newest
+    one (filenames sort chronologically) and prints its path and contents.
 
     Example:
-        Show today's report for a repository::
+        Show the latest run record for a repository::
 
             uv run python scripts/orchestrator.py report E:/GitHub/my-existing-app
     """
-    report_path = report_path_for_repository(Path(repository), datetime.now())
-    if not report_path.exists():
-        typer.secho(f"No report found at {report_path}", fg=typer.colors.YELLOW)
+    repository_path = Path(repository)
+    run_records = sorted(repository_path.glob(REPORT_FILENAME_GLOB))
+    if not run_records:
+        typer.secho(
+            f"No orchestrator run record found in {repository_path}", fg=typer.colors.YELLOW
+        )
         raise typer.Exit(code=1)
-    typer.echo(f"Report: {report_path}")
-    typer.echo(report_path.read_text(encoding="utf-8"))
+    latest_run_record = run_records[-1]
+    typer.echo(f"Run record: {latest_run_record}")
+    typer.echo(latest_run_record.read_text(encoding="utf-8"))
 
 
 @app.command()
