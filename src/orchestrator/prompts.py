@@ -31,9 +31,11 @@ Operating rules (these are mandatory):
 6. Use full, descriptive names for variables, functions, and files. Never abbreviate.
 7. Give every function a docstring that includes a detailed, runnable example.
 8. Commit periodically with clear, descriptive messages, and push to the remote{push_clause}.
-9. Maintain a single report file named REPORT_{report_date}.md in this repository. Record
-   the date and time, the tasks performed, and the commit history. You may split details
-   across additional linked markdown files, but keep one primary report per repository.
+9. Maintain a single work report file named REPORT_{report_timestamp}.md (date and time)
+   in this repository, unless your task instructions specify a different report filename or
+   location, in which case follow the instructions. Record the date and time, the tasks
+   performed, and the commit history. You may split details across additional linked
+   markdown files, but keep one primary report per repository.
 {branch_clause}
 """
 
@@ -44,7 +46,8 @@ def build_system_prompt(task: Task, push_enabled: bool, now: datetime) -> str:
     Args:
         task: The task being run, used for the repository path, mode, and branch.
         push_enabled: Whether commits should be pushed to the remote for this task.
-        now: The current time, used to date the report filename (``REPORT_YYYYMMDD.md``).
+        now: The current time, used to stamp the report filename
+            (``REPORT_YYYYMMDD_HHMMSS.md``).
 
     Returns:
         The fully rendered system prompt.
@@ -54,12 +57,12 @@ def build_system_prompt(task: Task, push_enabled: bool, now: datetime) -> str:
         >>> from pathlib import Path
         >>> task = Task(Path("a.md"), Path("E:/GitHub/app"), "new", "body", branch_name="feature/x")
         >>> prompt = build_system_prompt(task, push_enabled=True, now=datetime(2026, 6, 13, 22, 0))
-        >>> "REPORT_20260613.md" in prompt
+        >>> "REPORT_20260613_220000.md" in prompt
         True
         >>> "E:/GitHub/app" in prompt or "E:\\\\GitHub\\\\app" in prompt
         True
     """
-    report_date = now.strftime("%Y%m%d")
+    report_timestamp = now.strftime("%Y%m%d_%H%M%S")
     push_clause = "" if push_enabled else " (do not push for this task)"
     if task.branch_name:
         branch_clause = (
@@ -73,6 +76,6 @@ def build_system_prompt(task: Task, push_enabled: bool, now: datetime) -> str:
         repository_path=str(task.repository_path),
         mode=task.mode,
         push_clause=push_clause,
-        report_date=report_date,
+        report_timestamp=report_timestamp,
         branch_clause=branch_clause,
     )

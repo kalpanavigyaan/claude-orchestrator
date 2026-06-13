@@ -18,7 +18,7 @@ Work autonomously and complete the following without asking for confirmation:
 4. Update the project documentation to describe the new helper.
 5. Commit the change with a descriptive message and push to the remote.
 6. Record what you did, with timestamps and the commit history, in this repository's
-   `REPORT_YYYYMMDD.md` file.
+   `REPORT_YYYYMMDD_HHMMSS.md` file (date and time).
 
 Constraints:
 - Only modify files inside this repository.
