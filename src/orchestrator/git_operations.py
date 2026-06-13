@@ -9,14 +9,64 @@ rather than raising, so a git hiccup never aborts the whole run.
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
 from .logging_setup import get_logger
 
+# Common Git for Windows install locations to fall back to when ``git`` is not on the
+# PATH of the process that launched the orchestrator (a frequent situation when the app is
+# started from PowerShell while git only lives in the Git Bash environment).
+_COMMON_GIT_EXECUTABLE_PATHS = (
+    r"C:\Program Files\Git\cmd\git.exe",
+    r"C:\Program Files\Git\bin\git.exe",
+    r"C:\Program Files (x86)\Git\cmd\git.exe",
+)
+
+_resolved_git_executable: str | None = None
+_git_resolution_attempted: bool = False
+
+
+def resolve_git_executable() -> str | None:
+    """Find a usable ``git`` executable, searching the PATH then common install paths.
+
+    The result is cached after the first call. Returns ``None`` when no git executable can
+    be found, in which case git-dependent helpers degrade gracefully.
+
+    Returns:
+        The full path to a git executable, or ``None`` if git cannot be located.
+
+    Example:
+        >>> path = resolve_git_executable()
+        >>> path is None or path.lower().endswith("git.exe") or path.endswith("git")
+        True
+    """
+    global _resolved_git_executable, _git_resolution_attempted
+    if _git_resolution_attempted:
+        return _resolved_git_executable
+    _git_resolution_attempted = True
+
+    found_on_path = shutil.which("git")
+    if found_on_path:
+        _resolved_git_executable = found_on_path
+        return _resolved_git_executable
+
+    for candidate_path in _COMMON_GIT_EXECUTABLE_PATHS:
+        if os.path.exists(candidate_path):
+            _resolved_git_executable = candidate_path
+            return _resolved_git_executable
+
+    return None
+
 
 def _run_git_command(repository_path: Path, arguments: list[str]) -> subprocess.CompletedProcess:
     """Run a git command in a repository and capture its output.
+
+    Resolves the git executable from the PATH or common install locations. If git cannot be
+    found, or the command cannot be spawned (for example a working directory Windows
+    refuses), the call fails softly with a non-zero return code rather than raising.
 
     Args:
         repository_path: The repository working directory to run git in.
@@ -31,20 +81,31 @@ def _run_git_command(repository_path: Path, arguments: list[str]) -> subprocess.
         >>> True
         True
     """
+    git_executable = resolve_git_executable()
+    if git_executable is None:
+        get_logger().warning(
+            "git executable not found (PATH or common install paths); skipping git in %s.",
+            repository_path,
+        )
+        return subprocess.CompletedProcess(
+            args=["git", *arguments], returncode=1, stdout="", stderr="git not found"
+        )
     try:
         return subprocess.run(
-            ["git", *arguments],
+            [git_executable, *arguments],
             cwd=str(repository_path),
             capture_output=True,
             text=True,
             check=False,
         )
     except OSError as error:
-        # git missing from PATH, or the working directory cannot be used (for example a
-        # UNC path Windows refuses as a process working directory). Fail softly so callers
-        # treat it as "git unavailable" rather than crashing the run.
+        # The working directory cannot be used (for example a UNC path Windows refuses as a
+        # process working directory). Fail softly so callers treat it as "git unavailable"
+        # rather than crashing the run.
         get_logger().warning("git could not run in %s: %s", repository_path, error)
-        return subprocess.CompletedProcess(args=["git", *arguments], returncode=1, stdout="", stderr=str(error))
+        return subprocess.CompletedProcess(
+            args=[git_executable, *arguments], returncode=1, stdout="", stderr=str(error)
+        )
 
 
 def is_git_repository(repository_path: Path) -> bool:
