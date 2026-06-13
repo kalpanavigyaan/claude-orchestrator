@@ -15,6 +15,7 @@ reports, and waits for the five-hour usage reset when the usage limit is reached
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -28,9 +29,15 @@ from .git_operations import commit_all_changes, push_current_branch
 from .logging_setup import configure_logging, get_logger
 from .permissions import decide_tool_permission
 from .reporting import append_task_report, report_path_for_repository
-from .scheduler import current_time, is_within_window, wait_until_start
+from .scheduler import (
+    current_time,
+    is_within_window,
+    reset_time_from_epoch,
+    wait_until_start,
+)
 from .task_runner import run_single_task
 from .usage import UsageTracker, compute_reset_time, wait_for_usage_reset
+from .wsl_drive import DriveMappingError, mapped_paths
 
 MAXIMUM_RETRIES_AFTER_RESET = 3
 
@@ -105,23 +112,46 @@ async def _execute_run(
             break
 
         task = tasks[task_index]
-        result = await run_single_task(task, configuration, now=now)
-        usage_tracker.record_task_result(result)
-        append_task_report(task, result, now)
+        try:
+            with mapped_paths(
+                task.repository_path, configuration.scope.readable_roots
+            ) as (mapped_repository_path, mapped_readable_roots):
+                mapped_task = replace(task, repository_path=mapped_repository_path)
+                run_configuration = replace(
+                    configuration,
+                    scope=replace(configuration.scope, readable_roots=mapped_readable_roots),
+                )
+                result = await run_single_task(mapped_task, run_configuration, now=now)
+                usage_tracker.record_task_result(result)
+                append_task_report(mapped_task, result, now)
 
-        push_enabled = (
-            task.push_override if task.push_override is not None else configuration.defaults.push
-        )
-        if commit_all_changes(
-            task.repository_path, "orchestrator: safety-net commit of remaining work"
-        ) and push_enabled:
-            push_current_branch(task.repository_path)
+                push_enabled = (
+                    task.push_override
+                    if task.push_override is not None
+                    else configuration.defaults.push
+                )
+                if commit_all_changes(
+                    mapped_task.repository_path,
+                    "orchestrator: safety-net commit of remaining work",
+                ) and push_enabled:
+                    push_current_branch(mapped_task.repository_path)
+        except DriveMappingError as error:
+            logger.error(
+                "Could not access the repository for %s: %s", task.instruction_path, error
+            )
+            task_index += 1
+            continue
 
         if usage_tracker.is_checkpoint_due(configuration.defaults.usage_checkpoint_minutes, now):
             usage_tracker.log_checkpoint(now)
 
         if result.rate_limited:
-            reset_time = compute_reset_time(now, provided_reset_time=None)
+            provided_reset_time = (
+                reset_time_from_epoch(result.rate_limit_reset_epoch, schedule)
+                if result.rate_limit_reset_epoch
+                else None
+            )
+            reset_time = compute_reset_time(now, provided_reset_time=provided_reset_time)
             resumed = await wait_for_usage_reset(
                 reset_time,
                 schedule.end_time,

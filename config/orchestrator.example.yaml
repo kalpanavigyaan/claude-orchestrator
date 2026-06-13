@@ -1,3 +1,7 @@
+# @Author: Ramanan Pitchumani
+# @Date:   2026-06-12 16:11:04
+# @Last Modified by:   Ramanan Pitchumani
+# @Last Modified time: 2026-06-12 21:28:07
 # Example configuration for claude-orchestrator.
 # Copy this file to config/orchestrator.yaml and edit the values for your machine.
 
@@ -20,7 +24,7 @@ defaults:
   permission_mode: "default"       # the in-code permission callback does the real gating
   commit_interval_minutes: 30      # how often a long task should commit progress
   push: true                       # push commits to the remote by default
-  usage_checkpoint_minutes: 15     # how often accumulated token usage is logged
+  usage_checkpoint_minutes: 5      # how often accumulated token usage is logged
 
 limits:
   max_cost_usd: null               # optional cumulative spend cap; null disables it

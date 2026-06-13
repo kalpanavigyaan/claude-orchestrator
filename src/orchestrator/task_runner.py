@@ -6,6 +6,12 @@ while logging progress, and returns a :class:`~orchestrator.data_models.TaskRunR
 that captures success, turn count, token usage, cost, and whether the run was stopped by a
 usage limit.
 
+It uses :class:`claude_agent_sdk.ClaudeSDKClient` (the persistent, bidirectional client)
+rather than the one-shot ``query()`` function, because a ``can_use_tool`` permission
+callback relies on a control channel that must stay open for the whole run. A one-shot
+``query()`` whose input stream ends would close that channel, causing every approval to
+fail with "Stream closed".
+
 The Claude Agent SDK drives the local ``claude`` command-line tool, which authenticates
 using the existing Claude Code subscription login (no API key is required).
 """
@@ -13,7 +19,6 @@ using the existing Claude Code subscription login (no API key is required).
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 
 from .data_models import Configuration, Task, TaskRunResult
 from .logging_setup import get_logger
@@ -51,7 +56,8 @@ async def run_single_task(
     """Run one task through the Claude Agent SDK and return its result.
 
     Builds the SDK options so the agent can read the configured scope but only write inside
-    the task's repository, then streams the agent's messages and records the final usage.
+    the task's repository, opens a persistent client (so the permission control channel
+    stays available), streams the agent's messages, and records the final usage.
 
     Args:
         task: The task to run.
@@ -71,8 +77,8 @@ async def run_single_task(
     from claude_agent_sdk import (
         AssistantMessage,
         ClaudeAgentOptions,
+        ClaudeSDKClient,
         ResultMessage,
-        query,
     )
 
     try:
@@ -109,23 +115,39 @@ async def run_single_task(
     logger.info("Starting task from %s targeting %s", task.instruction_path, task.repository_path)
 
     try:
-        async for message in query(prompt=task.body_text, options=options):
-            if RateLimitEvent and isinstance(message, RateLimitEvent):
-                logger.warning("Usage limit reached during task %s.", task.instruction_path)
-                result.rate_limited = True
-                continue
-            if isinstance(message, AssistantMessage):
-                _summarize_assistant_message(message)
-                continue
-            if isinstance(message, ResultMessage):
-                result.number_of_turns = getattr(message, "num_turns", 0) or 0
-                result.usage = usage_from_sdk_usage_dictionary(
-                    getattr(message, "usage", None), getattr(message, "total_cost_usd", None)
-                )
-                result.summary_text = getattr(message, "result", None)
-                result.succeeded = not getattr(message, "is_error", False)
-                if getattr(message, "api_error_status", None):
-                    result.error_message = f"API error status {message.api_error_status}"
+        async with ClaudeSDKClient(options=options) as client:
+            await client.query(task.body_text)
+            async for message in client.receive_response():
+                if RateLimitEvent and isinstance(message, RateLimitEvent):
+                    info = getattr(message, "rate_limit_info", None)
+                    status = getattr(info, "status", None)
+                    if status == "rejected":
+                        logger.warning(
+                            "Usage limit reached (rejected) during task %s.",
+                            task.instruction_path,
+                        )
+                        result.rate_limited = True
+                        result.rate_limit_reset_epoch = getattr(info, "resets_at", None)
+                    else:
+                        logger.info(
+                            "Rate limit status changed to '%s' (utilization=%s).",
+                            status,
+                            getattr(info, "utilization", None),
+                        )
+                    continue
+                if isinstance(message, AssistantMessage):
+                    _summarize_assistant_message(message)
+                    continue
+                if isinstance(message, ResultMessage):
+                    result.number_of_turns = getattr(message, "num_turns", 0) or 0
+                    result.usage = usage_from_sdk_usage_dictionary(
+                        getattr(message, "usage", None),
+                        getattr(message, "total_cost_usd", None),
+                    )
+                    result.summary_text = getattr(message, "result", None)
+                    result.succeeded = not getattr(message, "is_error", False)
+                    if getattr(message, "api_error_status", None):
+                        result.error_message = f"API error status {message.api_error_status}"
     except Exception as error:  # noqa: BLE001 - one task failing must not abort the batch
         logger.exception("Task %s failed with an exception.", task.instruction_path)
         result.succeeded = False

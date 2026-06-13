@@ -223,4 +223,11 @@ __marimo__/
 # claude-orchestrator
 logs/
 uv.lock
-config/orchestrator.yaml
+
+# config: only keep the example, ignore personal configs
+config/*
+!config/orchestrator.example.yaml
+
+# instructions: only keep the example folder, ignore personal ones
+instructions/*
+!instructions/example/

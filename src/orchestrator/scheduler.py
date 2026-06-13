@@ -41,6 +41,33 @@ def current_time(schedule: Schedule) -> datetime:
     return datetime.now()
 
 
+def reset_time_from_epoch(epoch_seconds: int, schedule: Schedule) -> datetime:
+    """Convert a Unix reset timestamp into a naive datetime in the schedule's timezone.
+
+    The schedule's start and end times are naive datetimes interpreted in the schedule's
+    timezone (or system local time when none is set). A rate-limit reset timestamp from the
+    platform is an absolute Unix time; this converts it into the same naive, comparable
+    form so it can be compared against the schedule end time.
+
+    Args:
+        epoch_seconds: The Unix timestamp when the usage window resets.
+        schedule: The schedule whose timezone determines the clock used.
+
+    Returns:
+        The reset time as a naive ``datetime`` comparable to the schedule's times.
+
+    Example:
+        >>> from datetime import datetime
+        >>> schedule = Schedule(datetime(2026, 1, 1), datetime(2030, 1, 1), timezone_name="UTC")
+        >>> reset_time_from_epoch(1_780_000_000, schedule)
+        datetime.datetime(2026, 5, 28, 8, 26, 40)
+    """
+    if schedule.timezone_name:
+        zone = ZoneInfo(schedule.timezone_name)
+        return datetime.fromtimestamp(epoch_seconds, zone).replace(tzinfo=None)
+    return datetime.fromtimestamp(epoch_seconds).replace(tzinfo=None)
+
+
 def is_within_window(schedule: Schedule, now: datetime | None = None) -> bool:
     """Return whether the current moment is inside the schedule window.
 

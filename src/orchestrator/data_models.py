@@ -210,7 +210,11 @@ class TaskRunResult:
         usage: Token and cost usage for the run.
         summary_text: The agent's final result text, when available.
         error_message: A human-readable error description when the run failed.
-        rate_limited: Whether the run stopped because the usage limit was hit.
+        rate_limited: Whether the run stopped because the usage limit was actually hit
+            (the rate limit status was ``"rejected"``, not merely an approaching-limit
+            warning).
+        rate_limit_reset_epoch: Unix timestamp when the usage window resets, when the
+            platform reported one; ``None`` falls back to a five-hour estimate.
 
     Example:
         >>> from pathlib import Path
@@ -227,3 +231,4 @@ class TaskRunResult:
     summary_text: str | None = None
     error_message: str | None = None
     rate_limited: bool = False
+    rate_limit_reset_epoch: int | None = None

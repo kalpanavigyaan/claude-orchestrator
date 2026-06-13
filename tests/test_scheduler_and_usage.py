@@ -6,6 +6,7 @@ from datetime import datetime
 from orchestrator.data_models import Limits, Schedule, Task, TaskRunResult, TaskUsage
 from orchestrator.scheduler import (
     is_within_window,
+    reset_time_from_epoch,
     seconds_until_end,
     wait_until_start,
 )
@@ -58,6 +59,16 @@ def test_usage_tracker_accumulates_and_enforces_limits():
     assert tracker.total_input_tokens == 100
     assert tracker.has_exceeded_limits(Limits(maximum_cost_usd=5.0))
     assert not tracker.has_exceeded_limits(Limits(maximum_cost_usd=None))
+
+
+def test_reset_time_from_epoch_uses_schedule_timezone():
+    """reset_time_from_epoch converts a Unix timestamp using the schedule timezone."""
+    utc_schedule = Schedule(
+        start_time=datetime(2026, 1, 1, 0, 0),
+        end_time=datetime(2030, 1, 1, 0, 0),
+        timezone_name="UTC",
+    )
+    assert reset_time_from_epoch(0, utc_schedule) == datetime(1970, 1, 1, 0, 0, 0)
 
 
 def test_compute_reset_time_defaults_to_five_hours():

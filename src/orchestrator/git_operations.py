@@ -31,13 +31,20 @@ def _run_git_command(repository_path: Path, arguments: list[str]) -> subprocess.
         >>> True
         True
     """
-    return subprocess.run(
-        ["git", *arguments],
-        cwd=str(repository_path),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        return subprocess.run(
+            ["git", *arguments],
+            cwd=str(repository_path),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as error:
+        # git missing from PATH, or the working directory cannot be used (for example a
+        # UNC path Windows refuses as a process working directory). Fail softly so callers
+        # treat it as "git unavailable" rather than crashing the run.
+        get_logger().warning("git could not run in %s: %s", repository_path, error)
+        return subprocess.CompletedProcess(args=["git", *arguments], returncode=1, stdout="", stderr=str(error))
 
 
 def is_git_repository(repository_path: Path) -> bool:

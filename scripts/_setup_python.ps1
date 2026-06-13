@@ -86,6 +86,7 @@ uv add pydantic
 uv add pyyaml
 uv add python-frontmatter
 uv add rich
+uv add tzdata                     # timezone database (Windows Python has no system zoneinfo)
 
 # 7. Add development packages.
 uv add --dev pytest
