@@ -41,9 +41,6 @@ function loadConfig() {
 }
 
 const config = loadConfig();
-const limitRegex = safeRegExp(
-  config.limitPattern || "(usage limit|rate.?limit|limit reached|out of (usage|tokens)|you've reached your)"
-);
 
 const prompt = createPushableAsyncIterable();
 /** @type {Map<string,(result:any)=>void>} */
@@ -52,14 +49,6 @@ let approvalCounter = 0;
 
 function emit(event) {
   process.stdout.write(JSON.stringify(event) + "\n");
-}
-
-function safeRegExp(source) {
-  try {
-    return new RegExp(source, "i");
-  } catch {
-    return /(usage limit|rate.?limit|limit reached)/i;
-  }
 }
 
 function toEpochMs(value) {
@@ -103,22 +92,23 @@ function findReset(object, depth = 0) {
   return null;
 }
 
+/**
+ * Detect a genuine account usage limit from the SDK's `rate_limit_event` message.
+ *
+ * The SDK emits `{ type: "rate_limit_event", rate_limit_info: { status, resetsAt,
+ * rateLimitType, overageStatus, ... } }` on every status transition. Only
+ * `rate_limit_info.status === "rejected"` means usage is actually exhausted —
+ * `status: "allowed"`/`"allowed_warning"` are normal, and `overageStatus` (pay-as-you-go)
+ * is unrelated to the primary limit. `resetsAt` is epoch seconds.
+ */
 function detectRateLimit(message) {
-  let flat;
-  try {
-    flat = JSON.stringify(message);
-  } catch {
+  if (!message || message.type !== "rate_limit_event") {
     return;
   }
-  const lower = flat.toLowerCase();
-  const structured =
-    lower.includes("rate_limit") ||
-    lower.includes("usage_limit") ||
-    lower.includes('"rejected"') ||
-    lower.includes("limit_reached");
-  if (structured || limitRegex.test(flat)) {
-    const resetAt = findReset(message) || Date.now() + 5 * 60 * 60 * 1000;
-    emit({ type: "rate_limit", resetAt });
+  const info = message.rate_limit_info || {};
+  if (info.status === "rejected") {
+    const resetAt = toEpochMs(info.resetsAt) || findReset(info) || Date.now() + 5 * 60 * 60 * 1000;
+    emit({ type: "rate_limit", resetAt, rateLimitType: info.rateLimitType || null });
   }
 }
 
