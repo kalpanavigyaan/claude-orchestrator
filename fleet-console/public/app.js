@@ -109,12 +109,74 @@ function renderChatHeader(s) {
   chatHeaderEl.innerHTML = `
     <span><strong>${escapeHtml(s.label)}</strong> — ${escapeHtml(s.status)}${s.lastResult ? " · $" + (s.lastResult.cost || 0).toFixed(4) : ""}</span>
     <span class="actions">
+      <button id="hdr-instr">Instructions</button>
       <button id="hdr-continue">Continue</button>
       <button id="hdr-stop">Stop</button>
     </span>`;
+  el("hdr-instr").addEventListener("click", () => openInstructions(s.id));
   el("hdr-continue").addEventListener("click", () => api(`/api/sessions/${s.id}/continue`));
   el("hdr-stop").addEventListener("click", () => api(`/api/sessions/${s.id}/stop`));
 }
+
+// ---- instructions modal ----------------------------------------------------
+
+let currentInstrSession = null;
+
+async function openInstructions(id) {
+  currentInstrSession = id;
+  el("instr-modal").classList.remove("hidden");
+  await refreshInstructions();
+}
+
+async function refreshInstructions() {
+  if (!currentInstrSession) return;
+  const data = await getJson(`/api/sessions/${currentInstrSession}/instructions`);
+  el("instr-folder").textContent = (data && data.instructionsDir) || "—";
+  const listEl = el("instr-list");
+  listEl.innerHTML = "";
+  const files = (data && data.files) || [];
+  if (!files.length) {
+    listEl.innerHTML = '<div class="instr-empty">No .md files yet.</div>';
+    return;
+  }
+  for (const f of files) {
+    const row = document.createElement("div");
+    row.className = "instr-file";
+    row.innerHTML =
+      `<span class="fname">${escapeHtml(f.name)}</span>` +
+      `<span class="fsize">${f.size} B</span>` +
+      `<button class="fdel" title="delete">✕</button>`;
+    row.querySelector(".fdel").addEventListener("click", async () => {
+      await api(`/api/sessions/${currentInstrSession}/instructions/delete`, { filename: f.name });
+      refreshInstructions();
+    });
+    listEl.appendChild(row);
+  }
+}
+
+el("instr-close").addEventListener("click", () => el("instr-modal").classList.add("hidden"));
+el("instr-save").addEventListener("click", async () => {
+  if (!currentInstrSession) return;
+  const filename = el("instr-name").value.trim();
+  const content = el("instr-content").value;
+  if (!content.trim() && !filename) {
+    alert("Enter a filename and/or content.");
+    return;
+  }
+  const r = await api(`/api/sessions/${currentInstrSession}/instructions`, { filename, content });
+  if (r && r.ok) {
+    el("instr-name").value = "";
+    el("instr-content").value = "";
+    refreshInstructions();
+  } else {
+    alert("Save failed: " + ((r && r.reason) || "unknown"));
+  }
+});
+el("instr-read").addEventListener("click", async () => {
+  if (!currentInstrSession) return;
+  await api(`/api/sessions/${currentInstrSession}/read-instructions`);
+  el("instr-modal").classList.add("hidden");
+});
 
 // ---- per-session chat ------------------------------------------------------
 

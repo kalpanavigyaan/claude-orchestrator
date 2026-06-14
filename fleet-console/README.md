@@ -90,12 +90,28 @@ A runner detects the account limit and reports a `resetAt`; the dashboard shows 
 `continue` automatically — or press **Continue all**. A dedupe guard prevents double-fires.
 `ask` sessions also continue but then wait at the next approval modal for you.
 
-## Session logs (YAML)
+## Session folders, YAML logs, and instructions
 
-Every session's interactions are written to `sessions/<label>_<id>.yaml` (override the folder
-with `SESSIONS_DIR`). Each file holds the session metadata, the last result (cost/usage), and
-an `interactions:` list of user/assistant/tool/result entries with timestamps — a durable,
-greppable record of what each agent did. The folder is gitignored.
+Each session is a **folder** under `E:\Sessions\Claude` (override with `SESSIONS_DIR`):
+
+```
+E:\Sessions\Claude\
+  <name>_<id>\
+    session.yaml        # metadata + last result (cost/usage) + a timestamped interactions log
+    instructions\       # markdown instruction files for this session
+      001_task.md
+```
+
+**Adding instructions and having Claude read them:** open a session → **Instructions**. The
+modal shows the folder path, lists the `.md` files, and lets you add one (filename + content)
+— or just drop `.md` files into the `instructions\` folder yourself. Click **Have Claude
+read** and the agent is sent a message to read every `.md` file in that folder (sorted by
+name) and follow it. The instructions folder is also added to the agent's readable
+directories, and the system prompt tells it where they live.
+
+**WSL sessions:** the agent runs inside the distro, so the instructions path is automatically
+translated to `/mnt/<drive>/Sessions/Claude/...` for the agent (you still manage the files
+from Windows at `E:\Sessions\Claude\...`).
 
 ## How interactive steering works
 

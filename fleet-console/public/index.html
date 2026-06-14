@@ -85,6 +85,23 @@
     </div>
   </div>
 
+  <!-- Instructions modal -->
+  <div id="instr-modal" class="overlay hidden">
+    <div class="modal">
+      <h2>Session instructions</h2>
+      <div class="instr-folder">Folder: <code id="instr-folder">—</code><br /><span class="muted-note">Drop .md files here, or add one below. Then "Have Claude read".</span></div>
+      <div class="side-title">Files</div>
+      <div id="instr-list" class="instr-list"></div>
+      <label>New file name <input id="instr-name" placeholder="001_task.md" /></label>
+      <label>Content <textarea id="instr-content" rows="7" placeholder="# Task&#10;Read the repo and ..."></textarea></label>
+      <div class="modal-actions">
+        <button id="instr-close">Close</button>
+        <button id="instr-save">Save file</button>
+        <button id="instr-read" class="primary">Have Claude read</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/app.js"></script>
 </body>
 </html>
