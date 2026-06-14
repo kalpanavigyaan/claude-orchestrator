@@ -24,6 +24,7 @@ const messagesEl = el("messages");
 const chatHeaderEl = el("chat-header");
 const countdownEl = el("account-countdown");
 const connEl = el("conn");
+const usageBarEl = el("usage-bar");
 
 function api(path, body) {
   return fetch(path, {
@@ -61,11 +62,81 @@ function setConnected(on) {
   connEl.className = "conn " + (on ? "online" : "offline");
 }
 
+// ---- account usage card ----------------------------------------------------
+
+const WINDOW_LABELS = {
+  five_hour: "5-hour limit",
+  seven_day: "Weekly limit",
+  seven_day_oauth: "Weekly limit",
+  seven_day_opus: "Weekly · Opus",
+  opus_weekly: "Weekly · Opus",
+};
+function windowLabel(type) {
+  if (WINDOW_LABELS[type]) return WINDOW_LABELS[type];
+  return String(type || "Usage").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+function usagePct(u) {
+  if (typeof u !== "number" || !isFinite(u)) return null;
+  const v = u <= 1 ? u * 100 : u;
+  return Math.max(0, Math.min(100, v));
+}
+function fmtTokens(n) {
+  n = n || 0;
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + "k";
+  return String(n);
+}
+
+function renderUsage() {
+  if (!usageBarEl) return;
+  const u = latest && latest.usage;
+  const windows = (u && u.windows) || [];
+  const totals = (u && u.totals) || { costUsd: 0, inputTokens: 0, outputTokens: 0 };
+  const hasTotals = totals.costUsd > 0 || totals.inputTokens > 0 || totals.outputTokens > 0;
+  if (!windows.length && !hasTotals) {
+    usageBarEl.classList.add("hidden");
+    usageBarEl.innerHTML = "";
+    return;
+  }
+  usageBarEl.classList.remove("hidden");
+
+  let html = "";
+  for (const w of windows) {
+    const p = usagePct(w.utilization);
+    const cls = p == null ? "" : p >= 90 ? "high" : p >= 70 ? "warn" : "";
+    const status = w.status || "—";
+    const bar = p == null ? "" :
+      `<div class="uc-bar"><div class="uc-fill ${cls}" style="width:${p.toFixed(0)}%"></div></div>`;
+    html +=
+      `<div class="usage-card">
+        <div class="uc-head">
+          <span class="uc-title">${escapeHtml(windowLabel(w.type))}</span>
+          <span class="uc-pill ${escapeHtml(status)}">${escapeHtml(String(status).replace(/_/g, " "))}</span>
+        </div>
+        ${bar}
+        <div class="uc-meta">
+          <span>${p == null ? "—" : p.toFixed(0) + "% used"}</span>
+          <span class="usage-reset" data-reset="${w.resetAt || ""}">${w.resetAt ? "resets " + fmtCountdown(w.resetAt) : ""}</span>
+        </div>
+        ${w.isUsingOverage ? '<div class="uc-sub">⚠ using overage</div>' : ""}
+      </div>`;
+  }
+  const nSessions = (latest && latest.sessions ? latest.sessions.length : 0);
+  html +=
+    `<div class="usage-card totals">
+      <div class="uc-head"><span class="uc-title">This run</span></div>
+      <div class="uc-big">$${(totals.costUsd || 0).toFixed(4)}</div>
+      <div class="uc-sub">${fmtTokens(totals.inputTokens)} in · ${fmtTokens(totals.outputTokens)} out · ${nSessions} session${nSessions === 1 ? "" : "s"}</div>
+    </div>`;
+  usageBarEl.innerHTML = html;
+}
+
 // ---- fleet rendering -------------------------------------------------------
 
 function renderFleet() {
   if (!latest) return;
   countdownEl.textContent = latest.account.resetAt ? fmtCountdown(latest.account.resetAt) : "—";
+  renderUsage();
 
   const ids = new Set();
   for (const node of sessionsEl.children) ids.add(node.dataset.id);
@@ -180,26 +251,48 @@ el("instr-read").addEventListener("click", async () => {
 
 // ---- per-session chat ------------------------------------------------------
 
+let sessionPollTimer = null;
+let renderedCount = 0;
+let seenApprovalIds = new Set();
+
 function selectSession(id) {
   if (sessionES) { sessionES.close(); sessionES = null; }
+  if (sessionPollTimer) { clearInterval(sessionPollTimer); sessionPollTimer = null; }
   selectedId = id;
   messagesEl.innerHTML = "";
+  renderedCount = 0;
   approvalQueue = [];
+  seenApprovalIds = new Set();
   renderFleet();
 
-  sessionES = new EventSource(`/api/sessions/${id}/events${tokenQuery}`);
-  sessionES.onmessage = (ev) => {
-    let data;
-    try { data = JSON.parse(ev.data); } catch { return; }
-    if (data.kind === "backlog") {
-      for (const m of data.messages) appendMessage(m);
-      for (const a of data.pendingApprovals || []) enqueueApproval(a);
-    } else if (data.kind === "message") {
-      appendMessage(data.message);
-    } else if (data.kind === "approval") {
-      enqueueApproval(data.approval);
+  // Poll-driven so the conversation loads/updates in ANY browser (including embedded ones
+  // where SSE may not work). SSE, when available, just triggers an immediate resync.
+  syncSession(id);
+  sessionPollTimer = setInterval(() => syncSession(id), 1500);
+  try {
+    sessionES = new EventSource(`/api/sessions/${id}/events${tokenQuery}`);
+    sessionES.onmessage = () => syncSession(id);
+  } catch {
+    /* polling covers it */
+  }
+}
+
+async function syncSession(id) {
+  if (id !== selectedId) return;
+  const d = await getJson(`/api/sessions/${id}`);
+  if (!d || !Array.isArray(d.messages)) return;
+  if (d.messages.length < renderedCount) {
+    messagesEl.innerHTML = "";
+    renderedCount = 0;
+  }
+  for (let i = renderedCount; i < d.messages.length; i++) appendMessage(d.messages[i]);
+  renderedCount = d.messages.length;
+  for (const a of d.pendingApprovals || []) {
+    if (!seenApprovalIds.has(a.id)) {
+      seenApprovalIds.add(a.id);
+      enqueueApproval(a);
     }
-  };
+  }
 }
 
 function appendMessage(m) {
@@ -466,22 +559,39 @@ async function loadHistoryItem(rel) {
 
 // ---- live connection -------------------------------------------------------
 
+function applyFleet(snapshot) {
+  if (!snapshot) return;
+  latest = snapshot;
+  clockOffset = snapshot.now - Date.now();
+  setConnected(true);
+  renderFleet();
+}
+
 function connectFleet() {
-  const es = new EventSource(`/api/events${tokenQuery}`);
-  es.onmessage = (ev) => {
-    try {
-      latest = JSON.parse(ev.data);
-      clockOffset = latest.now - Date.now();
-      setConnected(true);
-      renderFleet();
-    } catch { /* ignore */ }
-  };
-  es.onerror = () => setConnected(false);
+  try {
+    const es = new EventSource(`/api/events${tokenQuery}`);
+    es.onmessage = (ev) => {
+      try { applyFleet(JSON.parse(ev.data)); } catch { /* ignore */ }
+    };
+    es.onerror = () => setConnected(false);
+  } catch {
+    /* polling covers it */
+  }
+}
+
+// Polling fallback so the sidebar/usage update even where SSE is blocked (embedded browsers).
+async function pollFleet() {
+  const d = await getJson("/api/state");
+  if (d) applyFleet(d);
 }
 
 function tick() {
   if (!latest) return;
   countdownEl.textContent = latest.account.resetAt ? fmtCountdown(latest.account.resetAt) : "—";
+  for (const span of usageBarEl ? usageBarEl.querySelectorAll(".usage-reset") : []) {
+    const r = Number(span.dataset.reset);
+    if (r) span.textContent = "resets " + fmtCountdown(r);
+  }
   for (const node of sessionsEl.children) {
     const s = latest.sessions.find((x) => x.id === node.dataset.id);
     const timerEl = node.querySelector(".timer");
@@ -492,6 +602,8 @@ function tick() {
 }
 
 connectFleet();
+pollFleet();
 renderWslList();
 setInterval(tick, 1000);
+setInterval(pollFleet, 3000);
 setInterval(renderWslList, 15000);

@@ -50,6 +50,29 @@ button {
 button:active { transform: translateY(1px); }
 button.primary { background: var(--accent); color: #0b1020; border-color: transparent; font-weight: 600; }
 
+.usage-bar {
+  display: flex; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--border);
+}
+.usage-bar.hidden { display: none; }
+.usage-card {
+  flex: 1 1 200px; min-width: 180px; border: 1px solid var(--border);
+  border-radius: 12px; padding: 10px 12px; background: var(--panel-2);
+}
+.usage-card .uc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.usage-card .uc-title { font-size: 12px; font-weight: 600; }
+.usage-card .uc-pill { margin-left: auto; font-size: 10px; padding: 2px 7px; border-radius: 999px; background: var(--bg); text-transform: capitalize; }
+.uc-pill.allowed { color: var(--green); }
+.uc-pill.allowed_warning { color: var(--amber); }
+.uc-pill.rejected { color: var(--red); }
+.usage-card .uc-bar { height: 7px; border-radius: 999px; background: var(--bg); overflow: hidden; margin: 6px 0; }
+.usage-card .uc-fill { height: 100%; background: var(--green); transition: width .4s ease; }
+.usage-card .uc-fill.warn { background: var(--amber); }
+.usage-card .uc-fill.high { background: var(--red); }
+.usage-card .uc-meta { font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; font-variant-numeric: tabular-nums; }
+.usage-card.totals .uc-big { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.usage-card .uc-sub { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
 main { flex: 1; display: flex; min-height: 0; }
 
 .sidebar {

@@ -61,6 +61,8 @@ const sessions = new Map();
 /** Fleet-level SSE subscribers. */
 const fleetSse = new Set();
 let manualAccountReset = null;
+/** Latest account usage per rate-limit window (keyed by rateLimitType). */
+const accountUsage = new Map();
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -68,6 +70,14 @@ let manualAccountReset = null;
 
 function now() {
   return Date.now();
+}
+
+/** Normalize an epoch value (seconds or ms) to ms; null if absent/invalid. */
+function epochMs(value) {
+  if (typeof value !== "number" || !isFinite(value)) {
+    return null;
+  }
+  return value < 1e12 ? Math.round(value * 1000) : Math.round(value);
 }
 
 function readBody(req) {
@@ -138,10 +148,27 @@ function sessionSummary(s) {
   };
 }
 
+/** Aggregate cost + tokens across sessions (from each session's last result, this run). */
+function aggregateUsage() {
+  let costUsd = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  for (const s of sessions.values()) {
+    if (s.lastResult) {
+      costUsd += s.lastResult.cost || 0;
+      const u = s.lastResult.usage || {};
+      inputTokens += u.input_tokens || 0;
+      outputTokens += u.output_tokens || 0;
+    }
+  }
+  return { costUsd, inputTokens, outputTokens };
+}
+
 function fleetSnapshot() {
   return {
     now: now(),
     account: { resetAt: accountResetAt(), manualReset: manualAccountReset },
+    usage: { windows: [...accountUsage.values()], totals: aggregateUsage() },
     sessions: [...sessions.values()].map(sessionSummary),
   };
 }
@@ -454,7 +481,7 @@ async function listWslDistros() {
   const r = await runCapture("wsl.exe", ["--list", "--quiet"], { encoding: "utf16le" });
   return r.out
     .split(/\r?\n/)
-    .map((s) => s.replace(/ /g, "").trim())
+    .map((s) => s.replace(/\x00/g, "").trim())
     .filter(Boolean);
 }
 
@@ -694,6 +721,20 @@ function handleRunnerEvent(s, event) {
         recordMessage(s, { role: "result", text: event.resultText });
       }
       break;
+    case "usage": {
+      const info = event.info || {};
+      const key = info.rateLimitType || "primary";
+      accountUsage.set(key, {
+        type: key,
+        status: info.status ?? null,
+        utilization: typeof info.utilization === "number" ? info.utilization : null,
+        resetAt: epochMs(info.resetsAt),
+        overageStatus: info.overageStatus ?? null,
+        isUsingOverage: info.isUsingOverage ?? null,
+        updatedAt: now(),
+      });
+      break;
+    }
     case "rate_limit":
       s.resetAt = event.resetAt;
       s.status = "limited";

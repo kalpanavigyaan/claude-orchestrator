@@ -231,3 +231,5 @@ config/*
 # instructions: only keep the example folder, ignore personal ones
 instructions/*
 !instructions/example/
+
+logs/

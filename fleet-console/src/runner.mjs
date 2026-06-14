@@ -106,6 +106,9 @@ function detectRateLimit(message) {
     return;
   }
   const info = message.rate_limit_info || {};
+  // Forward the full info on EVERY event so the dashboard can show account usage (per window:
+  // status, utilization, reset time), not only when a limit is actually hit.
+  emit({ type: "usage", info });
   if (info.status === "rejected") {
     const resetAt = toEpochMs(info.resetsAt) || findReset(info) || Date.now() + 5 * 60 * 60 * 1000;
     emit({ type: "rate_limit", resetAt, rateLimitType: info.rateLimitType || null });
