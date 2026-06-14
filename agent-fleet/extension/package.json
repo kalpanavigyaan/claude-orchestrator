@@ -1,0 +1,104 @@
+{
+  "name": "claude-agent-fleet",
+  "displayName": "Claude Agent Fleet",
+  "description": "Per-window controller that detects Claude usage limits, waits for the 5-hour reset, and auto-continues the agent — while keeping the chat fully interactive.",
+  "version": "0.1.0",
+  "publisher": "kalpana-vigyaan",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      { "command": "agentFleet.toggle", "title": "Toggle Auto-Continue", "category": "Claude Agent Fleet" },
+      { "command": "agentFleet.continueNow", "title": "Continue Now", "category": "Claude Agent Fleet" },
+      { "command": "agentFleet.pause", "title": "Pause Auto-Continue", "category": "Claude Agent Fleet" },
+      { "command": "agentFleet.resume", "title": "Resume Auto-Continue", "category": "Claude Agent Fleet" },
+      { "command": "agentFleet.setResetTime", "title": "Set Reset Time…", "category": "Claude Agent Fleet" },
+      { "command": "agentFleet.showLog", "title": "Show Log", "category": "Claude Agent Fleet" }
+    ],
+    "configuration": {
+      "title": "Claude Agent Fleet",
+      "properties": {
+        "agentFleet.enabledByDefault": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether auto-continue is enabled when the window opens."
+        },
+        "agentFleet.label": {
+          "type": "string",
+          "default": "",
+          "description": "Optional friendly name for this window in the dashboard (defaults to the workspace folder name)."
+        },
+        "agentFleet.orchestrator.url": {
+          "type": "string",
+          "default": "http://127.0.0.1:4317",
+          "description": "Base URL of the orchestrator. Host windows use 127.0.0.1; WSL2/Hyper-V windows use the Windows host IP."
+        },
+        "agentFleet.orchestrator.intervalMs": {
+          "type": "number",
+          "default": 3000,
+          "description": "Heartbeat interval to the orchestrator, in milliseconds."
+        },
+        "agentFleet.usage.transcriptDir": {
+          "type": "string",
+          "default": "",
+          "description": "Override for the Claude transcript directory. Empty uses <home>/.claude/projects."
+        },
+        "agentFleet.usage.limitPattern": {
+          "type": "string",
+          "default": "(usage limit|rate.?limit|limit reached|out of (usage|tokens)|you've reached your)",
+          "description": "Case-insensitive regex that marks a transcript line as a usage-limit signal. Tune against a real limit line (visible in the dashboard event log)."
+        },
+        "agentFleet.continue.text": {
+          "type": "string",
+          "default": "continue",
+          "description": "Text sent to the agent to resume after the reset."
+        },
+        "agentFleet.continue.commandIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["claude-code.continue", "claude.continue", "anthropic.claude-code.continue"],
+          "description": "VS Code command ids to try first for continuation (used if/when Claude Code exposes one)."
+        },
+        "agentFleet.continue.terminalPattern": {
+          "type": "string",
+          "default": "claude",
+          "description": "Case-insensitive regex matching the name of an integrated terminal running the Claude CLI (for terminal-mode continuation)."
+        },
+        "agentFleet.continue.bufferSeconds": {
+          "type": "number",
+          "default": 30,
+          "description": "Seconds to wait past the detected reset time before continuing."
+        },
+        "agentFleet.continue.minIntervalSeconds": {
+          "type": "number",
+          "default": 300,
+          "description": "Minimum seconds between two automatic continuations (dedupe guard)."
+        },
+        "agentFleet.continue.idleGuardSeconds": {
+          "type": "number",
+          "default": 120,
+          "description": "Do not auto-continue if there was transcript activity within this many seconds (avoids interrupting active work)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}

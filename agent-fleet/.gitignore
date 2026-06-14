@@ -1,0 +1,8 @@
+# Build output and dependencies
+extension/out/
+extension/node_modules/
+orchestrator/node_modules/
+*.vsix
+
+# Runtime, machine-specific
+orchestrator/agent-cdp.json

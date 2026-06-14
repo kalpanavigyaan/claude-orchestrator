@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>Claude Agent Fleet</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header>
+    <h1>Claude Agent Fleet</h1>
+    <div class="account">
+      <div class="account-clock">
+        <span class="label">Account reset in</span>
+        <span id="account-countdown" class="countdown">—</span>
+      </div>
+      <div class="account-actions">
+        <button id="btn-continue-all" class="primary">Continue all</button>
+        <button id="btn-set-reset">Set reset…</button>
+        <span id="conn" class="conn offline">offline</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section id="agents" class="agents"></section>
+
+    <section class="logs">
+      <h2>Events</h2>
+      <pre id="log"></pre>
+    </section>
+  </main>
+
+  <template id="agent-card">
+    <div class="card">
+      <div class="card-head">
+        <span class="dot"></span>
+        <span class="name"></span>
+        <span class="env"></span>
+      </div>
+      <div class="status-row">
+        <span class="status"></span>
+        <span class="timer"></span>
+      </div>
+      <div class="meta"></div>
+      <div class="msg"></div>
+      <div class="actions">
+        <button data-act="continue" class="primary">Continue</button>
+        <button data-act="pause">Pause</button>
+        <button data-act="resume">Resume</button>
+        <button data-act="reset">Reset</button>
+        <button data-act="focus">Focus</button>
+      </div>
+    </div>
+  </template>
+
+  <script src="/app.js"></script>
+</body>
+</html>

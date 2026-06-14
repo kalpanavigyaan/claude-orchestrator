@@ -1,0 +1,17 @@
+{
+  "name": "claude-agent-fleet-orchestrator",
+  "version": "0.1.0",
+  "description": "Zero-dependency Node orchestrator: aggregates Claude agent windows, serves the dashboard, routes commands, and (optionally) performs CDP injection.",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "agent-fleet-orchestrator": "server.mjs"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "inject": "node cdp-inject.mjs"
+  },
+  "optionalDependencies": {
+    "playwright-core": "^1.44.0"
+  }
+}
