@@ -23,7 +23,16 @@
   </header>
 
   <main>
-    <aside id="sessions" class="sessions"></aside>
+    <aside class="sidebar">
+      <div class="side-section">
+        <div class="side-title">WSL distros</div>
+        <div id="wsl-list"></div>
+      </div>
+      <div class="side-section">
+        <div class="side-title">Sessions</div>
+        <div id="sessions"></div>
+      </div>
+    </aside>
 
     <section id="chat" class="chat">
       <div id="chat-header" class="chat-header">Select or create a session.</div>
@@ -46,7 +55,8 @@
           <option value="wsl">wsl (distro)</option>
         </select>
       </label>
-      <label id="f-distro-row" class="hidden">WSL distro <input id="f-distro" placeholder="Ubuntu-24-04-Vani" /></label>
+      <label id="f-distro-row" class="hidden">WSL distro <select id="f-distro"></select></label>
+      <label id="f-repos-row" class="hidden">Repository <select id="f-repos"></select></label>
       <label>Working directory <input id="f-cwd" placeholder="E:/GitHub/app  (or /home/user/app for WSL)" /></label>
       <label>Model <input id="f-model" placeholder="(blank = plan default)" /></label>
       <label>Policy

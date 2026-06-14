@@ -33,6 +33,12 @@ function api(path, body) {
   }).then((r) => r.json().catch(() => ({}))).catch(() => ({}));
 }
 
+function getJson(path) {
+  return fetch(path, { headers: { "x-fleet-token": TOKEN } })
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null);
+}
+
 function serverNow() {
   return Date.now() + clockOffset;
 }
@@ -199,11 +205,98 @@ function sendMessage() {
 
 // ---- new session modal -----------------------------------------------------
 
-el("btn-new").addEventListener("click", () => el("new-modal").classList.remove("hidden"));
-el("f-cancel").addEventListener("click", () => el("new-modal").classList.add("hidden"));
-el("f-host").addEventListener("change", () => {
-  el("f-distro-row").classList.toggle("hidden", el("f-host").value !== "wsl");
+el("btn-new").addEventListener("click", () => {
+  el("new-modal").classList.remove("hidden");
+  setupHostFields();
 });
+el("f-cancel").addEventListener("click", () => el("new-modal").classList.add("hidden"));
+el("f-host").addEventListener("change", setupHostFields);
+el("f-distro").addEventListener("change", () => loadRepos(el("f-distro").value));
+el("f-repos").addEventListener("change", () => {
+  if (el("f-repos").value) el("f-cwd").value = el("f-repos").value;
+});
+
+/** Show/hide the WSL distro+repo dropdowns based on the chosen host, loading distros for WSL. */
+function setupHostFields() {
+  const isWsl = el("f-host").value === "wsl";
+  el("f-distro-row").classList.toggle("hidden", !isWsl);
+  el("f-repos-row").classList.toggle("hidden", !isWsl);
+  if (isWsl) loadDistros();
+}
+
+/** Populate the distro dropdown; optionally select a name; then load its repos. */
+async function loadDistros(selectedName) {
+  const data = await getJson("/api/wsl/distros");
+  const sel = el("f-distro");
+  const distros = (data && data.distros) || [];
+  sel.innerHTML = "";
+  for (const d of distros) {
+    const o = document.createElement("option");
+    o.value = d.name;
+    o.textContent = `${d.name} (${d.state})`;
+    sel.appendChild(o);
+  }
+  if (selectedName && distros.some((d) => d.name === selectedName)) {
+    sel.value = selectedName;
+  }
+  if (sel.value) await loadRepos(sel.value);
+}
+
+/** Populate the repository dropdown for a distro; selecting one fills the cwd field. */
+async function loadRepos(distro) {
+  const sel = el("f-repos");
+  sel.innerHTML = '<option value="">(loading…)</option>';
+  const data = await getJson(`/api/wsl/repos?distro=${encodeURIComponent(distro)}`);
+  const repos = (data && data.repos) || [];
+  sel.innerHTML = "";
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = repos.length ? "(choose a repo)" : "(no git repos found — type a path below)";
+  sel.appendChild(blank);
+  for (const r of repos) {
+    const o = document.createElement("option");
+    o.value = r;
+    o.textContent = r;
+    sel.appendChild(o);
+  }
+  if (repos.length) {
+    sel.value = repos[0];
+    el("f-cwd").value = repos[0];
+  }
+}
+
+/** Open the New Session modal pre-set to a WSL distro (from the sidebar). */
+async function openNewSessionForDistro(name) {
+  el("new-modal").classList.remove("hidden");
+  el("f-host").value = "wsl";
+  el("f-distro-row").classList.remove("hidden");
+  el("f-repos-row").classList.remove("hidden");
+  await loadDistros(name);
+}
+
+/** Render the sidebar list of WSL distros with running state; click to start a session there. */
+async function renderWslList() {
+  const data = await getJson("/api/wsl/distros");
+  const listEl = el("wsl-list");
+  if (!listEl) return;
+  const distros = (data && data.distros) || [];
+  listEl.innerHTML = "";
+  for (const d of distros) {
+    const running = /running/i.test(d.state);
+    const item = document.createElement("div");
+    item.className = "wsl-item";
+    item.innerHTML =
+      `<span class="dot ${running ? "running" : "stopped"}"></span>` +
+      `<span class="name">${escapeHtml(d.name)}</span>` +
+      (d.default ? '<span class="star">★</span>' : "") +
+      `<span class="state">${escapeHtml(d.state)}</span>`;
+    item.addEventListener("click", () => openNewSessionForDistro(d.name));
+    listEl.appendChild(item);
+  }
+  if (distros.length === 0) {
+    listEl.innerHTML = '<div class="side-title">none detected</div>';
+  }
+}
 el("f-create").addEventListener("click", async () => {
   const spec = {
     label: el("f-label").value.trim(),
@@ -268,4 +361,6 @@ function tick() {
 }
 
 connectFleet();
+renderWslList();
 setInterval(tick, 1000);
+setInterval(renderWslList, 15000);

@@ -11,6 +11,7 @@
     "start": "node src/orchestrator.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "latest"
+    "@anthropic-ai/claude-agent-sdk": "latest",
+    "js-yaml": "^4.2.0"
   }
 }

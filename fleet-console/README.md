@@ -46,9 +46,13 @@ Other env: `PORT` (4318), `HOST` (127.0.0.1), `CONTINUE_BUFFER_SECONDS` (30),
 Click **New session**:
 
 - **Label** — name in the sidebar.
-- **Host** — `local` (Windows host) or `wsl` (a distro; enter its name).
-- **Working directory** — Windows path for local (`E:/GitHub/app`) or a native Linux path for
-  WSL (`/home/you/app`). WSL cwd is native inside the distro, so there is no UNC-path problem.
+- **Host** — `local` (Windows host) or `wsl`. For `wsl`, the **distro** is a dropdown of the
+  distributions detected on the machine, and **Repository** is a dropdown of the git repos
+  found in that distro (selecting one fills the working directory). The **sidebar** also
+  lists every WSL distro with its running/stopped state — click one to start a session there.
+- **Working directory** — Windows path for local (`E:/GitHub/app`), or (for WSL) auto-filled
+  from the repository dropdown / a native Linux path (`/home/you/app`). WSL cwd is native
+  inside the distro, so there is no UNC-path problem.
 - **Model** — blank uses your plan default.
 - **Policy:**
   - **auto** — runs unattended (`acceptEdits`), so the 5-hour auto-continue is useful while
@@ -85,6 +89,13 @@ A runner detects the account limit and reports a `resetAt`; the dashboard shows 
 (account-wide). At `resetAt + buffer`, every session with **auto-continue** on is sent
 `continue` automatically — or press **Continue all**. A dedupe guard prevents double-fires.
 `ask` sessions also continue but then wait at the next approval modal for you.
+
+## Session logs (YAML)
+
+Every session's interactions are written to `sessions/<label>_<id>.yaml` (override the folder
+with `SESSIONS_DIR`). Each file holds the session metadata, the last result (cost/usage), and
+an `interactions:` list of user/assistant/tool/result entries with timestamps — a durable,
+greppable record of what each agent did. The folder is gitignored.
 
 ## How interactive steering works
 
