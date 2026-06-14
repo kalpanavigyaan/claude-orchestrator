@@ -90,17 +90,26 @@ A runner detects the account limit and reports a `resetAt`; the dashboard shows 
 `continue` automatically — or press **Continue all**. A dedupe guard prevents double-fires.
 `ask` sessions also continue but then wait at the next approval modal for you.
 
-## Session folders, YAML logs, and instructions
+## Session folders, history, and instructions
 
-Each session is a **folder** under `E:\Sessions\Claude` (override with `SESSIONS_DIR`):
+Sessions are organized on disk like an editor's history, under `E:\Sessions\Claude`
+(override with `SESSIONS_DIR`):
 
 ```
 E:\Sessions\Claude\
-  <name>_<id>\
-    session.yaml        # metadata + last result (cost/usage) + a timestamped interactions log
+  <WSL|Windows>\<distro-or-host>\<repo>\<title>\
+    session.json        # canonical record: metadata + last result + interactions
+    conversation.md     # the same conversation rendered as readable markdown
     instructions\       # markdown instruction files for this session
       001_task.md
 ```
+
+For example a WSL session named "powder run" in the `powder-flow` repo of `Ubuntu-24-04-DEM`
+lands at `E:\Sessions\Claude\WSL\Ubuntu-24-04-DEM\powder-flow\powder-run\`.
+
+**History browser:** click **History** in the header to browse every saved session (grouped
+by host / distro / repo), and open any one to read its full conversation — so you can go
+back and review past runs exactly as they were.
 
 **Adding instructions and having Claude read them:** open a session → **Instructions**. The
 modal shows the folder path, lists the `.md` files, and lets you add one (filename + content)

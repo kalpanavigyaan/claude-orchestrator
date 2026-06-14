@@ -105,7 +105,22 @@ main { flex: 1; display: flex; min-height: 0; }
 .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 50; }
 .overlay.hidden { display: none; }
 .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 18px; width: min(520px, 100%); max-height: 90vh; overflow: auto; }
+.modal.modal-wide { width: min(960px, 100%); }
 .modal h2 { margin: 0 0 12px; font-size: 16px; }
+
+.history-wrap { display: flex; gap: 12px; min-height: 300px; max-height: 64vh; }
+.history-list { flex: 0 0 280px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; padding: 8px; }
+.history-detail { flex: 1; overflow: auto; border: 1px solid var(--border); border-radius: 10px; padding: 12px; min-width: 0; }
+.history-group { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 10px 2px 4px; word-break: break-all; }
+.history-item { padding: 7px 9px; border-radius: 8px; cursor: pointer; }
+.history-item:hover { background: var(--panel-2); }
+.history-item.active { background: var(--panel-2); border: 1px solid var(--accent); }
+.history-item .ht { font-size: 13px; font-weight: 600; display: block; }
+.history-item .hmeta { font-size: 11px; color: var(--muted); }
+.hd-head { font-size: 13px; color: var(--muted); margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.hd-msgs { display: flex; flex-direction: column; gap: 8px; }
+
+@media (max-width: 720px) { .history-wrap { flex-direction: column; } .history-list { flex: 0 0 auto; max-height: 30vh; } }
 .modal label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
 .modal input, .modal select, .modal textarea {
   width: 100%; margin-top: 4px; background: var(--panel-2); color: var(--text);

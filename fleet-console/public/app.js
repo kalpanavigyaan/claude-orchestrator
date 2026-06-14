@@ -395,6 +395,75 @@ el("btn-set-reset").addEventListener("click", () => {
   else alert("Could not parse: " + v);
 });
 
+// ---- history browser -------------------------------------------------------
+
+el("btn-history").addEventListener("click", openHistory);
+el("history-close").addEventListener("click", () => el("history-modal").classList.add("hidden"));
+
+async function openHistory() {
+  el("history-modal").classList.remove("hidden");
+  el("history-detail").innerHTML = '<div class="muted-note">Select a session to view its conversation.</div>';
+  const listEl = el("history-list");
+  listEl.innerHTML = '<div class="muted-note">Loading…</div>';
+  const data = await getJson("/api/history");
+  el("history-root").textContent = (data && data.root) ? "Stored in: " + data.root : "";
+  const sessions = (data && data.sessions) || [];
+  listEl.innerHTML = "";
+  if (!sessions.length) {
+    listEl.innerHTML = '<div class="muted-note">No saved sessions yet.</div>';
+    return;
+  }
+  let lastGroup = "";
+  for (const s of sessions) {
+    const groupLabel = `${s.hostKind} / ${s.group} / ${s.repo}`;
+    if (groupLabel !== lastGroup) {
+      const h = document.createElement("div");
+      h.className = "history-group";
+      h.textContent = groupLabel;
+      listEl.appendChild(h);
+      lastGroup = groupLabel;
+    }
+    const item = document.createElement("div");
+    item.className = "history-item";
+    const when = s.createdAt ? new Date(s.createdAt).toLocaleString() : "";
+    item.innerHTML =
+      `<span class="ht">${escapeHtml(s.title)}</span>` +
+      `<span class="hmeta">${s.messages} msgs${when ? " · " + escapeHtml(when) : ""}${s.status ? " · " + escapeHtml(s.status) : ""}</span>`;
+    item.addEventListener("click", () => {
+      for (const n of listEl.querySelectorAll(".history-item")) n.classList.remove("active");
+      item.classList.add("active");
+      loadHistoryItem(s.rel);
+    });
+    listEl.appendChild(item);
+  }
+}
+
+async function loadHistoryItem(rel) {
+  const detail = el("history-detail");
+  detail.innerHTML = '<div class="muted-note">Loading…</div>';
+  const data = await getJson(`/api/history/item?path=${encodeURIComponent(rel)}`);
+  if (!data || !data.meta) {
+    detail.innerHTML = '<div class="muted-note">Could not load this session.</div>';
+    return;
+  }
+  const m = data.meta;
+  const cost = m.lastResult ? " · $" + (m.lastResult.cost || 0).toFixed(4) : "";
+  let html =
+    `<div class="hd-head"><strong>${escapeHtml(m.label || "")}</strong> — ${escapeHtml(m.host || "")}` +
+    `${m.distro ? " (" + escapeHtml(m.distro) + ")" : ""} · ${escapeHtml(m.status || "")}${cost}<br />` +
+    `<span class="muted-note">${escapeHtml(m.cwd || "")}</span></div>`;
+  html += '<div class="hd-msgs">';
+  for (const e of m.interactions || []) {
+    const role = e.role || "system";
+    const text = e.tool
+      ? `🔧 ${e.tool} ${e.input ? JSON.stringify(e.input).slice(0, 200) : ""}`
+      : e.text || "";
+    html += `<div class="msg ${escapeHtml(role)}">${escapeHtml(text)}</div>`;
+  }
+  html += "</div>";
+  detail.innerHTML = html;
+}
+
 // ---- live connection -------------------------------------------------------
 
 function connectFleet() {

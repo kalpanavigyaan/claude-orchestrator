@@ -17,10 +17,10 @@ import fs from "node:fs";
 import path from "node:path";
 import url from "node:url";
 import crypto from "node:crypto";
+import os from "node:os";
 import readline from "node:readline";
 import { spawn } from "node:child_process";
 import { buildSpawn, toMnt } from "./hosts.mjs";
-import yaml from "js-yaml";
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const RUNNER_PATH = path.join(__dirname, "runner.mjs");
@@ -177,8 +177,8 @@ function recordMessage(s, message) {
   pushSessionEvent(s, { kind: "message", message: { ts: now(), ...message } });
 }
 
-/** Build the YAML-serializable record of a session's interactions. */
-function sessionYamlObject(s) {
+/** Build the canonical JSON record of a session (metadata + interactions). */
+function sessionRecordObject(s) {
   return {
     id: s.id,
     label: s.label,
@@ -201,16 +201,128 @@ function sessionYamlObject(s) {
   };
 }
 
-/** Write the session's interaction log to session.yaml inside its session folder. */
+/** Render a human-readable markdown transcript of the session for display/archival. */
+function renderConversationMarkdown(s) {
+  const lines = [
+    `# ${s.label}`,
+    "",
+    `- Host: ${s.host}${s.distro ? ` (${s.distro})` : ""}`,
+    `- Working dir: ${s.cwd}`,
+    `- Created: ${new Date(s.createdAt).toISOString()}`,
+    `- Status: ${s.status}`,
+  ];
+  if (s.lastResult) {
+    lines.push(`- Cost: $${(s.lastResult.cost || 0).toFixed(4)} · turns: ${s.lastResult.turns || 0}`);
+  }
+  lines.push("", "---", "");
+  for (const m of s.messages) {
+    const t = new Date(m.ts).toISOString();
+    if (m.role === "user") {
+      lines.push(`### 🧑 User · ${t}`, "", m.text || "", "");
+    } else if (m.role === "assistant") {
+      lines.push(`### 🤖 Claude · ${t}`, "", m.text || "", "");
+    } else if (m.role === "tool") {
+      lines.push(`> 🔧 \`${m.name}\` ${m.input ? "`" + JSON.stringify(m.input) + "`" : ""}`, "");
+    } else if (m.role === "result") {
+      lines.push(`### ✅ Result · ${t}`, "", m.text || "", "");
+    } else {
+      lines.push(`_${m.role}: ${m.text || ""}_`, "");
+    }
+  }
+  return lines.join("\n");
+}
+
+/** Write the session as session.json (canonical) + conversation.md (display) in its folder. */
 function persistSession(s) {
   try {
     const dir = s.sessionDir || SESSIONS_DIR;
     fs.mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, "session.yaml");
-    fs.writeFileSync(file, yaml.dump(sessionYamlObject(s), { lineWidth: 120, noRefs: true }));
+    fs.writeFileSync(path.join(dir, "session.json"), JSON.stringify(sessionRecordObject(s), null, 2));
+    fs.writeFileSync(path.join(dir, "conversation.md"), renderConversationMarkdown(s));
   } catch {
     /* best effort */
   }
+}
+
+/** Repo/working-dir name (last path segment) from a Windows or POSIX cwd. */
+function repoNameOf(cwd) {
+  const parts = String(cwd || "").split(/[\\/]+/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : "repo";
+}
+
+function listSubdirs(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Walk the sessions tree (<root>/<WSL|Windows>/<distro-or-host>/<repo>/<title>/) and return
+ * a flat, newest-first list of saved sessions for the history browser.
+ */
+function listHistory() {
+  const out = [];
+  for (const hostKind of listSubdirs(SESSIONS_DIR)) {
+    const hkDir = path.join(SESSIONS_DIR, hostKind);
+    for (const group of listSubdirs(hkDir)) {
+      const grpDir = path.join(hkDir, group);
+      for (const repo of listSubdirs(grpDir)) {
+        const repoDir = path.join(grpDir, repo);
+        for (const title of listSubdirs(repoDir)) {
+          const dir = path.join(repoDir, title);
+          let meta = {};
+          try {
+            meta = JSON.parse(fs.readFileSync(path.join(dir, "session.json"), "utf8"));
+          } catch {
+            /* folder without a session.json yet */
+          }
+          let mtime = 0;
+          try {
+            mtime = fs.statSync(dir).mtimeMs;
+          } catch {
+            /* ignore */
+          }
+          out.push({
+            rel: path.relative(SESSIONS_DIR, dir),
+            hostKind,
+            group,
+            repo,
+            title,
+            label: meta.label || title,
+            createdAt: meta.createdAt || null,
+            status: meta.status || null,
+            messages: Array.isArray(meta.interactions) ? meta.interactions.length : 0,
+            mtime,
+          });
+        }
+      }
+    }
+  }
+  out.sort((a, b) => b.mtime - a.mtime);
+  return out;
+}
+
+/** Read one saved session for display: { meta (session.json), markdown (conversation.md) }. */
+function readHistoryItem(rel) {
+  const dir = path.resolve(path.join(SESSIONS_DIR, String(rel || "")));
+  if (!dir.startsWith(path.resolve(SESSIONS_DIR))) {
+    return null;
+  }
+  let meta = null;
+  let markdown = "";
+  try {
+    meta = JSON.parse(fs.readFileSync(path.join(dir, "session.json"), "utf8"));
+  } catch {
+    return null;
+  }
+  try {
+    markdown = fs.readFileSync(path.join(dir, "conversation.md"), "utf8");
+  } catch {
+    /* optional */
+  }
+  return { meta, markdown };
 }
 
 /** List the .md instruction files in a session's instructions folder (sorted). */
@@ -422,10 +534,17 @@ function createSession(spec) {
   const runnerPath = spec.runnerPath || (wslReg && wslReg.runnerPath) || null;
   const nodeBin = spec.node || (wslReg && wslReg.node) || null;
 
-  // Each session is a FOLDER under SESSIONS_DIR: <name>_<id>/ holding session.yaml and an
-  // instructions/ subfolder where the user (or the app) drops .md instruction files.
-  const folderName = `${safeSegment(label)}_${id}`;
-  const sessionDir = path.join(SESSIONS_DIR, folderName);
+  // Organize like VS Code: <root>/<WSL|Windows>/<distro-or-host>/<repo>/<title>/, each session
+  // folder holding session.json + conversation.md + an instructions/ subfolder. The title is
+  // the session name; if that folder already exists, the short id is appended to keep it unique.
+  const hostKind = host === "wsl" ? "WSL" : "Windows";
+  const group = safeSegment(host === "wsl" ? spec.distro || "distro" : os.hostname());
+  const repo = safeSegment(repoNameOf(spec.cwd));
+  const title = safeSegment(label);
+  let sessionDir = path.join(SESSIONS_DIR, hostKind, group, repo, title);
+  if (fs.existsSync(sessionDir)) {
+    sessionDir = `${sessionDir}_${id}`;
+  }
   const instructionsDir = path.join(sessionDir, "instructions");
   try {
     fs.mkdirSync(instructionsDir, { recursive: true });
@@ -688,6 +807,21 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === "/api/state" && method === "GET") {
     sendJson(res, 200, fleetSnapshot());
+    return;
+  }
+
+  // Session history (browse past sessions saved on disk)
+  if (pathname === "/api/history" && method === "GET") {
+    sendJson(res, 200, { root: SESSIONS_DIR, sessions: listHistory() });
+    return;
+  }
+  if (pathname === "/api/history/item" && method === "GET") {
+    const item = readHistoryItem(query.path);
+    if (!item) {
+      sendJson(res, 404, { ok: false, reason: "not found" });
+      return;
+    }
+    sendJson(res, 200, item);
     return;
   }
 

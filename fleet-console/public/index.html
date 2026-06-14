@@ -18,6 +18,7 @@
       <span id="account-countdown" class="countdown">—</span>
       <button id="btn-continue-all" class="primary">Continue all</button>
       <button id="btn-set-reset">Set reset…</button>
+      <button id="btn-history">History</button>
       <button id="btn-new">New session</button>
     </div>
   </header>
@@ -99,6 +100,19 @@
         <button id="instr-save">Save file</button>
         <button id="instr-read" class="primary">Have Claude read</button>
       </div>
+    </div>
+  </div>
+
+  <!-- History modal -->
+  <div id="history-modal" class="overlay hidden">
+    <div class="modal modal-wide">
+      <h2>Session history</h2>
+      <div class="muted-note" id="history-root">—</div>
+      <div class="history-wrap">
+        <div id="history-list" class="history-list"></div>
+        <div id="history-detail" class="history-detail"><div class="muted-note">Select a session to view its conversation.</div></div>
+      </div>
+      <div class="modal-actions"><button id="history-close">Close</button></div>
     </div>
   </div>
 
