@@ -372,6 +372,20 @@ async function listWslDistrosVerbose() {
   return distros;
 }
 
+const WSL_RUNNERS_FILE = path.join(__dirname, "..", "wsl-runners.json");
+
+/**
+ * Load the per-distro in-distro runner registry written by scripts/setup-wsl-distro.ps1:
+ * { "<distro>": { "node": "/abs/path/to/node", "runnerPath": "/abs/.../src/runner.mjs" } }.
+ */
+function loadWslRunners() {
+  try {
+    return JSON.parse(fs.readFileSync(WSL_RUNNERS_FILE, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
 /** List git repositories (directories containing .git) inside a WSL distro's home areas. */
 async function listWslRepos(distro) {
   // The script is piped to `bash -s` over stdin (not passed as an argv element), so quotes,
@@ -401,6 +415,12 @@ function createSession(spec) {
     spec.permissionMode || (policy === "auto" ? "acceptEdits" : "default");
   const host = spec.host === "wsl" ? "wsl" : "local";
   const label = spec.label || spec.cwd || id;
+
+  // For a WSL session, use the in-distro node + staged runner recorded by setup-wsl-distro.ps1
+  // (the agent must run inside the distro with the Linux Agent SDK). Fall back to defaults.
+  const wslReg = host === "wsl" ? loadWslRunners()[spec.distro] || null : null;
+  const runnerPath = spec.runnerPath || (wslReg && wslReg.runnerPath) || null;
+  const nodeBin = spec.node || (wslReg && wslReg.node) || null;
 
   // Each session is a FOLDER under SESSIONS_DIR: <name>_<id>/ holding session.yaml and an
   // instructions/ subfolder where the user (or the app) drops .md instruction files.
@@ -445,8 +465,8 @@ function createSession(spec) {
     label,
     host,
     distro: spec.distro || null,
-    runnerPath: spec.runnerPath || null,
-    node: spec.node || null,
+    runnerPath,
+    node: nodeBin,
     cwd: spec.cwd,
     model: spec.model || null,
     permissionMode,
@@ -471,6 +491,12 @@ function createSession(spec) {
   };
 
   sessions.set(id, session);
+  if (host === "wsl" && !wslReg) {
+    recordMessage(session, {
+      role: "system",
+      text: `Distro "${spec.distro}" is not set up for fleet-console. Run: scripts\\setup-wsl-distro.ps1 -Distro ${spec.distro}`,
+    });
+  }
   spawnRunner(session);
   return session;
 }
