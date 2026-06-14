@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>Fleet Console</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1>Fleet Console</h1>
+      <span id="conn" class="conn offline">offline</span>
+    </div>
+    <div class="account">
+      <span class="label">Account reset</span>
+      <span id="account-countdown" class="countdown">—</span>
+      <button id="btn-continue-all" class="primary">Continue all</button>
+      <button id="btn-set-reset">Set reset…</button>
+      <button id="btn-new">New session</button>
+    </div>
+  </header>
+
+  <main>
+    <aside id="sessions" class="sessions"></aside>
+
+    <section id="chat" class="chat">
+      <div id="chat-header" class="chat-header">Select or create a session.</div>
+      <div id="messages" class="messages"></div>
+      <form id="composer" class="composer" autocomplete="off">
+        <textarea id="composer-input" rows="2" placeholder="Message the agent… (Enter to send, Shift+Enter for newline)"></textarea>
+        <button type="submit" class="primary">Send</button>
+      </form>
+    </section>
+  </main>
+
+  <!-- New session modal -->
+  <div id="new-modal" class="overlay hidden">
+    <div class="modal">
+      <h2>New session</h2>
+      <label>Label <input id="f-label" placeholder="my task" /></label>
+      <label>Host
+        <select id="f-host">
+          <option value="local">local (Windows host)</option>
+          <option value="wsl">wsl (distro)</option>
+        </select>
+      </label>
+      <label id="f-distro-row" class="hidden">WSL distro <input id="f-distro" placeholder="Ubuntu-24-04-Vani" /></label>
+      <label>Working directory <input id="f-cwd" placeholder="E:/GitHub/app  (or /home/user/app for WSL)" /></label>
+      <label>Model <input id="f-model" placeholder="(blank = plan default)" /></label>
+      <label>Policy
+        <select id="f-policy">
+          <option value="auto">auto — runs unattended (walk-away, auto-continue)</option>
+          <option value="ask">ask — prompts you to approve each tool</option>
+        </select>
+      </label>
+      <label>Initial prompt <textarea id="f-prompt" rows="3" placeholder="What should this agent do?"></textarea></label>
+      <div class="modal-actions">
+        <button id="f-cancel">Cancel</button>
+        <button id="f-create" class="primary">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Approval modal -->
+  <div id="approval-modal" class="overlay hidden">
+    <div class="modal">
+      <h2>Tool approval</h2>
+      <div id="approval-body" class="approval-body"></div>
+      <div class="modal-actions">
+        <button id="appr-deny">Deny</button>
+        <button id="appr-allow" class="primary">Allow</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "name": "claude-fleet-console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Own and interactively drive multiple Claude Agent SDK sessions from a web UI; auto-continue after the 5-hour reset.",
+  "bin": {
+    "fleet-console": "src/orchestrator.mjs"
+  },
+  "scripts": {
+    "start": "node src/orchestrator.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "latest"
+  }
+}
