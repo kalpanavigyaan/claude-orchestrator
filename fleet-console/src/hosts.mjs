@@ -43,10 +43,25 @@ export function buildSpawn(session, runnerLocalPath) {
   if (session.host === "wsl") {
     const distro = session.distro || "Ubuntu";
     const runnerLinux = session.runnerPath || toMnt(runnerLocalPath);
-    const node = session.node || "node";
+    if (session.node) {
+      // A concrete node path was registered for this distro (setup-wsl-distro.ps1) — use it
+      // directly; this is the proven path.
+      return {
+        command: "wsl.exe",
+        args: ["-d", distro, "--", session.node, runnerLinux, "--config", configB64],
+      };
+    }
+    // No registered node: `wsl -d distro -- node …` runs in a *non-login* shell where nvm has
+    // not put node on PATH, which fails with "node: command not found" (exit 127). Resolve node
+    // through a login shell that sources nvm, then exec it (no interactive flag → no job-control
+    // noise on stderr).
+    const inner =
+      'export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"; ' +
+      'command -v node >/dev/null 2>&1 || { echo "fleet-console: node not found in distro" >&2; exit 127; }; ' +
+      'exec node "$@"';
     return {
       command: "wsl.exe",
-      args: ["-d", distro, "--", node, runnerLinux, "--config", configB64],
+      args: ["-d", distro, "--", "bash", "-lc", inner, "fcrunner", runnerLinux, "--config", configB64],
     };
   }
 

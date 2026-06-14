@@ -25,6 +25,8 @@ const chatHeaderEl = el("chat-header");
 const countdownEl = el("account-countdown");
 const connEl = el("conn");
 const usageBarEl = el("usage-bar");
+const workingEl = el("working");
+const workingTextEl = el("working-text");
 
 function api(path, body) {
   return fetch(path, {
@@ -174,19 +176,52 @@ function renderFleet() {
       for (const a of sel.pendingApprovals) enqueueApproval(a);
     }
   }
+  updateWorking();
+}
+
+/** Show a status line under the chat so the user always knows what the agent is doing. */
+function updateWorking() {
+  if (!workingEl) return;
+  const s = latest && selectedId ? latest.sessions.find((x) => x.id === selectedId) : null;
+  if (!s) { workingEl.classList.add("hidden"); return; }
+  let text = "";
+  let err = false;
+  switch (s.status) {
+    case "running": text = "Claude is working…"; break;
+    case "starting": text = "Starting the session…"; break;
+    case "limited": text = "Usage limit reached — will auto-continue after the reset."; break;
+    case "error": text = "Runner stopped. Press Restart to try again."; err = true; break;
+    default: workingEl.classList.add("hidden"); return; // idle, ended
+  }
+  workingTextEl.textContent = text;
+  workingEl.classList.toggle("err", err);
+  workingEl.classList.remove("hidden");
 }
 
 function renderChatHeader(s) {
+  const cost = s.lastResult ? " · $" + (s.lastResult.cost || 0).toFixed(4) : "";
   chatHeaderEl.innerHTML = `
-    <span><strong>${escapeHtml(s.label)}</strong> — ${escapeHtml(s.status)}${s.lastResult ? " · $" + (s.lastResult.cost || 0).toFixed(4) : ""}</span>
+    <span><strong>${escapeHtml(s.label)}</strong> — <span class="badge ${escapeHtml(s.status)}">${escapeHtml(s.status)}</span>${cost}</span>
     <span class="actions">
       <button id="hdr-instr">Instructions</button>
+      <button id="hdr-restart">Restart</button>
       <button id="hdr-continue">Continue</button>
       <button id="hdr-stop">Stop</button>
     </span>`;
   el("hdr-instr").addEventListener("click", () => openInstructions(s.id));
-  el("hdr-continue").addEventListener("click", () => api(`/api/sessions/${s.id}/continue`));
-  el("hdr-stop").addEventListener("click", () => api(`/api/sessions/${s.id}/stop`));
+  el("hdr-restart").addEventListener("click", async () => {
+    await api(`/api/sessions/${s.id}/restart`);
+    pollFleet();
+    syncSession(s.id);
+  });
+  el("hdr-continue").addEventListener("click", async () => {
+    await api(`/api/sessions/${s.id}/continue`);
+    pollFleet();
+  });
+  el("hdr-stop").addEventListener("click", async () => {
+    await api(`/api/sessions/${s.id}/stop`);
+    pollFleet();
+  });
 }
 
 // ---- instructions modal ----------------------------------------------------
@@ -245,7 +280,11 @@ el("instr-save").addEventListener("click", async () => {
 });
 el("instr-read").addEventListener("click", async () => {
   if (!currentInstrSession) return;
-  await api(`/api/sessions/${currentInstrSession}/read-instructions`);
+  const r = await api(`/api/sessions/${currentInstrSession}/read-instructions`);
+  if (r && r.ok === false) {
+    alert("Couldn't reach the runner to read instructions — it may need a Restart or distro setup.");
+    return; // keep the modal open so the user can retry
+  }
   el("instr-modal").classList.add("hidden");
 });
 
@@ -351,11 +390,24 @@ input.addEventListener("keydown", (e) => {
     sendMessage();
   }
 });
-function sendMessage() {
+async function sendMessage() {
   const text = input.value.trim();
   if (!text || !selectedId) return;
-  api(`/api/sessions/${selectedId}/message`, { text });
+  const id = selectedId;
   input.value = "";
+  // Optimistic feedback so the UI reacts instantly even before the next poll cycle.
+  if (workingEl) {
+    workingTextEl.textContent = "Claude is working…";
+    workingEl.classList.remove("hidden", "err");
+  }
+  const r = await api(`/api/sessions/${id}/message`, { text });
+  if (id !== selectedId) return; // user switched sessions during the await — don't touch the shared UI
+  syncSession(id); // pull the recorded user message (and any immediate reply) right away
+  pollFleet(); // refresh status so the working indicator reflects reality
+  if (r && r.ok === false) {
+    workingTextEl.textContent = "Couldn't reach the runner — it may need a Restart or distro setup.";
+    workingEl.classList.add("err");
+  }
 }
 
 // ---- new session modal -----------------------------------------------------

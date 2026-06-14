@@ -436,6 +436,48 @@ function writeToRunner(s, obj) {
   return false;
 }
 
+/** True if the session has a live runner we can write to. */
+function runnerAlive(s) {
+  return !!(s.proc && s.proc.stdin && s.proc.stdin.writable);
+}
+
+/**
+ * Make sure the session has a live runner.
+ *
+ * If one is already alive, returns { alive:true, respawned:false } — the caller delivers its
+ * message/continue over stdin as usual. If the runner is dead, this starts a *fresh* SDK session
+ * (no prior context). Any `pendingPrompt` is handed to that fresh runner as its initial prompt so
+ * it is consumed reliably once the runner is ready, rather than racing a stdin write against a
+ * just-spawned (or doomed) process. Returns { alive, respawned:true }.
+ */
+function ensureRunner(s, pendingPrompt = "") {
+  if (runnerAlive(s)) {
+    return { alive: true, respawned: false };
+  }
+  s.ready = false;
+  s.runnerConfig = { ...s.runnerConfig, initialPrompt: String(pendingPrompt || "") };
+  recordMessage(s, { role: "system", text: "Starting a fresh session runner…" });
+  spawnRunner(s);
+  return { alive: runnerAlive(s), respawned: true };
+}
+
+/**
+ * Deliver a user message to a session's runner. A live runner gets it over stdin (status →
+ * running); a dead one is respawned with the text as its initial prompt (status → starting, so the
+ * ready event can settle it). Returns ensureRunner's { alive, respawned }.
+ */
+function deliverUserText(s, text) {
+  const r = ensureRunner(s, text);
+  if (r.alive && !r.respawned) {
+    s.status = "running";
+    writeToRunner(s, { type: "user", text });
+  } else if (r.alive) {
+    // Fresh runner will consume `text` as its initial prompt once ready.
+    s.status = "starting";
+  }
+  return r;
+}
+
 /**
  * Run a command and capture stdout, never rejecting (resolves { ok, out, err }).
  * `encoding` is needed because `wsl.exe --list` emits UTF-16LE.
@@ -619,6 +661,7 @@ function createSession(spec) {
     policy,
     autoContinue: spec.autoContinue !== false,
     status: "starting",
+    ready: false,
     resetAt: null,
     nextContinueAt: null,
     lastContinueAt: null,
@@ -652,8 +695,20 @@ function spawnRunner(s) {
   const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
   s.proc = child;
 
+  // Swallow EPIPE/errors on stdin: writing a command just as the runner dies would otherwise raise
+  // an unhandled 'error' event and crash the whole orchestrator.
+  if (child.stdin) {
+    child.stdin.on("error", () => {});
+  }
+
+  // Only the current child may mutate session state; a superseded (respawned) child is ignored.
+  const isCurrent = () => s.proc === child;
+
   const out = readline.createInterface({ input: child.stdout });
   out.on("line", (line) => {
+    if (!isCurrent()) {
+      return;
+    }
     const text = line.trim();
     if (!text) {
       return;
@@ -668,6 +723,9 @@ function spawnRunner(s) {
   });
 
   child.stderr.on("data", (d) => {
+    if (!isCurrent()) {
+      return;
+    }
     // Runner diagnostics; keep last line as a log message.
     const msg = String(d).trim();
     if (msg) {
@@ -676,13 +734,38 @@ function spawnRunner(s) {
   });
 
   child.on("exit", (code) => {
+    // Ignore a stale child's exit if it has already been superseded by a respawn (restart).
+    if (s.proc && s.proc !== child) {
+      return;
+    }
     s.status = code === 0 ? "ended" : "error";
     s.proc = null;
-    recordMessage(s, { role: "system", text: `runner exited (code ${code})` });
+    // A non-zero exit *before the runner ever became ready* almost always means the runner could
+    // not be launched inside the distro — surface an actionable message instead of a bare code.
+    if (code !== 0 && !s.ready) {
+      if (s.host === "wsl" && code === 127) {
+        recordMessage(s, {
+          role: "system",
+          text:
+            `Runner could not start in "${s.distro}" (node not found, exit 127). Set the distro up: ` +
+            `scripts\\setup-wsl-distro.ps1 -Distro ${s.distro} — then restart the orchestrator and recreate the session.`,
+        });
+      } else {
+        recordMessage(s, {
+          role: "system",
+          text: `Runner failed to start (exit ${code}). Check the distro/working directory and try again.`,
+        });
+      }
+    } else {
+      recordMessage(s, { role: "system", text: `runner exited (code ${code})` });
+    }
     broadcastFleet();
   });
 
   child.on("error", (err) => {
+    if (!isCurrent()) {
+      return;
+    }
     s.status = "error";
     recordMessage(s, { role: "system", text: `runner spawn error: ${err}` });
     broadcastFleet();
@@ -693,6 +776,7 @@ function handleRunnerEvent(s, event) {
   switch (event.type) {
     case "status":
       if (event.status === "ready") {
+        s.ready = true;
         s.status = s.status === "starting" ? "idle" : s.status;
       } else if (event.status === "idle") {
         s.status = "idle";
@@ -767,9 +851,23 @@ function schedulerTick() {
       s.nextContinueAt = null;
       continue;
     }
-    s.lastContinueAt = now();
     s.nextContinueAt = null;
     s.resetAt = null;
+    // A "continue" is only meaningful to a live session; the runner stays alive through a normal
+    // rate-limit pause, so the healthy path writes directly. If the runner has died (crash, distro
+    // shutdown), don't write into a dead pipe and leave the session stuck on "running" — surface an
+    // error so the user can Restart. (We don't auto-respawn: a fresh session has no context to
+    // continue.)
+    if (!runnerAlive(s)) {
+      s.status = "error";
+      recordMessage(s, {
+        role: "system",
+        text: "Auto-continue skipped: the runner is no longer running. Press Restart to start a fresh session.",
+      });
+      broadcastFleet();
+      continue;
+    }
+    s.lastContinueAt = now();
     s.status = "running";
     writeToRunner(s, { type: "continue" });
     recordMessage(s, { role: "system", text: "auto-continued after reset" });
@@ -981,32 +1079,71 @@ const server = http.createServer(async (req, res) => {
     if (verb === "read-instructions") {
       const text = readInstructionsMessage(s);
       recordMessage(s, { role: "user", text });
-      s.status = "running";
-      writeToRunner(s, { type: "user", text });
-      sendJson(res, 200, { ok: true });
+      const r = deliverUserText(s, text);
+      sendJson(res, 200, { ok: r.alive });
     } else if (verb === "message") {
       const text = String(body.text || "");
       recordMessage(s, { role: "user", text });
-      s.status = "running";
-      writeToRunner(s, { type: "user", text });
-      sendJson(res, 200, { ok: true });
+      // Deliver to a live runner, or hand the text to a freshly respawned one as its initial prompt
+      // so messages are never silently dropped into a dead process (which previously left the UI
+      // stuck on "running").
+      const r = deliverUserText(s, text);
+      sendJson(res, 200, { ok: r.alive });
     } else if (verb === "approval") {
       s.pendingApprovals.delete(body.id);
       writeToRunner(s, { type: "approval", id: body.id, decision: body.decision, message: body.message });
       sendJson(res, 200, { ok: true });
     } else if (verb === "continue") {
-      s.status = "running";
       s.resetAt = null;
       s.nextContinueAt = null;
-      writeToRunner(s, { type: "continue" });
-      sendJson(res, 200, { ok: true });
+      const r = ensureRunner(s); // no pending prompt: "continue" is only meaningful to a live session
+      if (r.alive && !r.respawned) {
+        s.status = "running";
+        writeToRunner(s, { type: "continue" });
+      } else if (r.alive) {
+        // The old session had ended — a bare "continue" means nothing to a fresh, context-free
+        // session, so don't send it; just bring the runner up and tell the user.
+        s.status = "starting";
+        recordMessage(s, {
+          role: "system",
+          text: "The previous session had ended; started a fresh one. Send a message to carry on.",
+        });
+      }
+      sendJson(res, 200, { ok: r.alive });
+    } else if (verb === "restart") {
+      // Bring the in-distro agent down cleanly (a SIGTERM to the wsl.exe relay would not reach it)
+      // before respawning. Kill only the *captured* old child so a later respawn isn't affected.
+      const old = s.proc;
+      if (old) {
+        writeToRunner(s, { type: "shutdown" });
+        s.proc = null; // detach: the old child's exit is now treated as stale
+        setTimeout(() => {
+          try {
+            if (!old.killed) old.kill();
+          } catch {
+            /* ignore */
+          }
+        }, 1200);
+      }
+      // Fresh runner with no queued work — "starting" lets the runner's ready event settle it to
+      // idle (whereas "running" would stick, since ready only clears the "starting" state).
+      const r = ensureRunner(s);
+      if (r.alive) {
+        s.status = "starting";
+      }
+      sendJson(res, 200, { ok: r.alive });
     } else if (verb === "stop") {
+      const old = s.proc; // kill the child being stopped, not whatever s.proc is 1s from now
       writeToRunner(s, { type: "shutdown" });
-      setTimeout(() => {
-        if (s.proc) {
-          s.proc.kill();
-        }
-      }, 1000);
+      if (old) {
+        setTimeout(() => {
+          try {
+            if (!old.killed) old.kill();
+          } catch {
+            /* ignore */
+          }
+        }, 1000);
+      }
       sendJson(res, 200, { ok: true });
     } else if (verb === "auto-continue") {
       s.autoContinue = body.enabled !== false;
@@ -1023,6 +1160,11 @@ const server = http.createServer(async (req, res) => {
     let count = 0;
     for (const s of sessions.values()) {
       if (s.status === "limited" || s.status === "idle") {
+        // Only continue sessions with a live runner; writing into a dead pipe would silently drop
+        // the continue and pin the session on "running". Dead sessions are left for a manual Restart.
+        if (!runnerAlive(s)) {
+          continue;
+        }
         s.status = "running";
         s.resetAt = null;
         s.nextContinueAt = null;
@@ -1040,6 +1182,11 @@ const server = http.createServer(async (req, res) => {
     manualAccountReset = Number(body.resetAt) || null;
     if (manualAccountReset) {
       for (const s of sessions.values()) {
+        // Only schedule sessions whose runner is actually alive. Marking a dead session "limited"
+        // would feed it to the scheduler/continue-all, which can't continue a process that exited.
+        if (!runnerAlive(s)) {
+          continue;
+        }
         if (s.status === "limited" || s.autoContinue) {
           s.resetAt = manualAccountReset;
           s.nextContinueAt = manualAccountReset + BUFFER_MS;

@@ -101,6 +101,7 @@ main { flex: 1; display: flex; min-height: 0; }
 .session-item .badge { margin-left: auto; font-size: 11px; padding: 2px 7px; border-radius: 999px; background: var(--bg); }
 .badge.running { color: var(--green); }
 .badge.limited { color: var(--amber); }
+.badge.starting { color: var(--amber); }
 .badge.idle { color: var(--accent); }
 .badge.error, .badge.ended { color: var(--red); }
 .session-item .sub { color: var(--muted); font-size: 11px; margin-top: 4px; word-break: break-all; }
@@ -117,6 +118,15 @@ main { flex: 1; display: flex; min-height: 0; }
 .msg.tool { align-self: flex-start; background: transparent; border: 1px dashed var(--border); color: var(--muted); font-size: 12px; }
 .msg.system { align-self: center; background: transparent; color: var(--muted); font-size: 12px; }
 .msg.result { align-self: flex-start; background: rgba(110,168,254,.08); border: 1px solid var(--border); font-size: 13px; }
+
+.working { display: flex; align-items: center; gap: 8px; padding: 6px 14px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--border); }
+.working.hidden { display: none; }
+.working.err { color: var(--red); }
+.working .dots { display: inline-flex; gap: 4px; }
+.working .dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); display: inline-block; animation: blink 1.2s infinite both; }
+.working .dots i:nth-child(2) { animation-delay: .2s; }
+.working .dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
 
 .composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
 .composer textarea {
