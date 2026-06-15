@@ -773,6 +773,7 @@ function selectSession(id) {
   approvalQueue = [];
   seenApprovalIds = new Set();
   lastTool = null;
+  lastAssistantText = "";
   for (const n of el("history-list-side") ? el("history-list-side").children : []) n.classList.remove("active");
   updateComposer(); // enable the composer immediately, without waiting for the next poll
   renderStatusBar();
@@ -841,6 +842,8 @@ function toolSummary(m) {
   return detail ? `${name} · ${detail}` : name;
 }
 
+let lastAssistantText = "";
+
 function appendMessage(m) {
   const role = m.role || "system";
   // Tool calls aren't shown as chat bubbles — they bury the actual responses. The latest one is
@@ -850,15 +853,24 @@ function appendMessage(m) {
     updateWorking();
     return;
   }
+  const text = m.text || "";
+  if (role === "assistant") {
+    lastAssistantText = text.trim();
+  }
+  // The SDK emits the final answer as BOTH an assistant text block and a "result" message — skip the
+  // result bubble when it just repeats the assistant text (that's the duplicate-response the user saw).
+  if (role === "result" && text.trim() && text.trim() === lastAssistantText) {
+    return;
+  }
   const div = document.createElement("div");
   div.className = "msg " + role;
   // Claude's responses are markdown (tables, bold, lists, code) — render them; keep user/system
   // text literal.
   if (role === "assistant" || role === "result") {
     div.classList.add("md");
-    div.innerHTML = mdToHtml(m.text || "");
+    div.innerHTML = mdToHtml(text);
   } else {
-    div.textContent = m.text || "";
+    div.textContent = text;
   }
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -1021,6 +1033,65 @@ async function renderWslList() {
   }
   if (distros.length === 0) {
     listEl.innerHTML = '<div class="side-title">none detected</div>';
+  }
+}
+
+/** Open the New Session modal pre-filled for a repo from the Repositories panel. */
+async function openNewSessionForRepo(g, r) {
+  el("new-modal").classList.remove("hidden");
+  el("f-host").value = g.host;
+  el("f-label").value = r.name;
+  setupHostFields();
+  if (g.host === "wsl" && g.distro) {
+    await loadDistros(g.distro);
+  }
+  el("f-cwd").value = r.path; // set after loadDistros (loadRepos would otherwise overwrite it)
+}
+
+/** Render the Repositories panel: local + running WSL repos, each with a git change-count badge. */
+async function renderRepos() {
+  const listEl = el("repos-list");
+  if (!listEl) return;
+  const data = await getJson("/api/repos");
+  const groups = (data && data.groups) || [];
+  if (!groups.length) {
+    listEl.innerHTML =
+      data && data.computing
+        ? '<div class="muted-note" style="padding:4px 2px">scanning…</div>'
+        : '<div class="muted-note" style="padding:4px 2px">none found</div>';
+    return;
+  }
+  listEl.innerHTML = "";
+  for (const g of groups) {
+    const head = document.createElement("div");
+    head.className = "repo-group";
+    head.textContent = (g.host === "wsl" ? "🐧 " : "🖥 ") + g.label;
+    listEl.appendChild(head);
+    if (!g.repos.length) {
+      const empty = document.createElement("div");
+      empty.className = "muted-note";
+      empty.style.padding = "2px 8px";
+      empty.textContent = "no repos";
+      listEl.appendChild(empty);
+      continue;
+    }
+    for (const r of g.repos) {
+      const item = document.createElement("div");
+      item.className = "repo-item";
+      item.title = r.path + (r.branch ? " · " + r.branch : "");
+      let badge = "";
+      if (typeof r.changes === "number" && r.changes > 0) {
+        badge = `<span class="repo-badge" title="${r.changes} uncommitted change(s)">${r.changes}</span>`;
+      } else if (r.changes === 0) {
+        badge = '<span class="repo-clean" title="clean">✓</span>';
+      }
+      item.innerHTML =
+        `<span class="repo-name">${escapeHtml(r.name)}</span>` +
+        (r.branch ? `<span class="repo-branch">⎇ ${escapeHtml(r.branch)}</span>` : "") +
+        badge;
+      item.addEventListener("click", () => openNewSessionForRepo(g, r));
+      listEl.appendChild(item);
+    }
   }
 }
 el("f-create").addEventListener("click", async () => {
@@ -1238,6 +1309,7 @@ async function viewPastSession(rel) {
   selectedId = null;
   viewingRel = rel;
   lastTool = null;
+  lastAssistantText = "";
   approvalQueue = [];
   for (const n of sessionsEl.children) n.classList.remove("active");
   renderHistorySidebar();
@@ -1411,14 +1483,20 @@ async function loadHistoryItem(rel) {
     `${m.distro ? " (" + escapeHtml(m.distro) + ")" : ""} · ${escapeHtml(m.status || "")}${cost}<br />` +
     `<span class="muted-note">${escapeHtml(m.cwd || "")}</span></div>`;
   html += '<div class="hd-msgs">';
+  let prevAssistant = "";
   for (const e of m.interactions || []) {
     const role = e.role || "system";
+    const text = e.text || "";
     if (e.tool) {
       html += `<div class="msg tool">🔧 ${escapeHtml(e.tool)} ${escapeHtml(e.input ? JSON.stringify(e.input).slice(0, 200) : "")}</div>`;
-    } else if (role === "assistant" || role === "result") {
-      html += `<div class="msg ${escapeHtml(role)} md">${mdToHtml(e.text || "")}</div>`;
+    } else if (role === "assistant") {
+      prevAssistant = text.trim();
+      html += `<div class="msg assistant md">${mdToHtml(text)}</div>`;
+    } else if (role === "result") {
+      if (text.trim() && text.trim() === prevAssistant) continue; // skip result that repeats the assistant text
+      html += `<div class="msg result md">${mdToHtml(text)}</div>`;
     } else {
-      html += `<div class="msg ${escapeHtml(role)}">${escapeHtml(e.text || "")}</div>`;
+      html += `<div class="msg ${escapeHtml(role)}">${escapeHtml(text)}</div>`;
     }
   }
   html += "</div>";
@@ -1478,7 +1556,9 @@ connectFleet();
 pollFleet();
 renderWslList();
 renderHistorySidebar();
+renderRepos();
 setInterval(tick, 1000);
 setInterval(pollFleet, 3000);
 setInterval(renderWslList, 15000);
 setInterval(renderHistorySidebar, 15000);
+setInterval(renderRepos, 20000);

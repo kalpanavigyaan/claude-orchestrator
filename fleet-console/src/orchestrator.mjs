@@ -35,6 +35,8 @@ const MIN_INTERVAL_MS = config.continue.minIntervalSeconds * 1000;
 const USAGE_POLL_MS = Math.max(1000, config.usage.pollSeconds * 1000);
 const MESSAGE_CAP = 500;
 const SESSIONS_DIR = config.sessions.dir;
+const REPO_LOCAL_ROOTS = (config.repos && Array.isArray(config.repos.localRoots)) ? config.repos.localRoots : [];
+const REPO_MAX_DEPTH = (config.repos && config.repos.maxDepth) || 3;
 try {
   fs.mkdirSync(SESSIONS_DIR, { recursive: true });
 } catch {
@@ -636,6 +638,94 @@ async function listWslRepos(distro) {
 }
 
 // ---------------------------------------------------------------------------
+// repositories panel: git repos + status (local + running WSL distros), cached
+// ---------------------------------------------------------------------------
+
+/** Find git repos (dirs containing .git) under a local root, bounded by depth; don't recurse into one. */
+function findLocalRepos(root, maxDepth) {
+  const repos = [];
+  const walk = (dir, depth) => {
+    if (depth > maxDepth || repos.length >= 100) return;
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    if (entries.some((e) => e.isDirectory() && e.name === ".git")) {
+      repos.push(dir);
+      return; // a repo — don't descend further
+    }
+    for (const e of entries) {
+      if (e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules") {
+        walk(path.join(dir, e.name), depth + 1);
+      }
+    }
+  };
+  walk(root, 0);
+  return repos;
+}
+
+/** Branch + uncommitted-change count for a local repo (null if git is unavailable). */
+async function localRepoStatus(repo) {
+  const br = await runCapture("git", ["-C", repo, "rev-parse", "--abbrev-ref", "HEAD"], { timeoutMs: 8000 });
+  const st = await runCapture("git", ["-C", repo, "status", "--porcelain"], { timeoutMs: 8000 });
+  return {
+    path: repo.replace(/\\/g, "/"),
+    name: path.basename(repo),
+    branch: br.ok ? br.out.trim() : null,
+    changes: st.ok ? st.out.split(/\r?\n/).filter((l) => l.trim()).length : null,
+  };
+}
+
+/** Repos + git status inside a running WSL distro (one spawn: find repos, then branch/changes each). */
+async function wslRepoStatuses(distro) {
+  const script =
+    `for r in "$HOME" /root /home/*; do [ -d "$r" ] && find "$r" -maxdepth 4 -type d -name .git -printf '%h\\n' 2>/dev/null; done | sort -u | head -200 | ` +
+    `while IFS= read -r d; do b=$(git -C "$d" rev-parse --abbrev-ref HEAD 2>/dev/null); ` +
+    `c=$(git -C "$d" status --porcelain 2>/dev/null | grep -c .); printf '%s\\t%s\\t%s\\n' "$d" "$b" "$c"; done\n`;
+  const r = await runCapture("wsl.exe", ["-d", distro, "--", "bash", "-s"], { encoding: "utf8", timeoutMs: 45000, stdin: script });
+  return r.out
+    .split(/\r?\n/)
+    .map((line) => {
+      const [p, b, c] = line.split("\t");
+      if (!p) return null;
+      return { path: p, name: p.split("/").filter(Boolean).pop() || p, branch: (b || "").trim() || null, changes: c != null && c !== "" ? Number(c) : null };
+    })
+    .filter(Boolean);
+}
+
+/** Build the repositories list: local roots + each running WSL distro, with git status. */
+async function computeRepos() {
+  const groups = [];
+  const localRepos = [];
+  for (const root of REPO_LOCAL_ROOTS) {
+    for (const repo of findLocalRepos(root, REPO_MAX_DEPTH)) {
+      localRepos.push(repo);
+    }
+  }
+  const localUnique = [...new Set(localRepos)].slice(0, 100);
+  if (localUnique.length) {
+    const repos = await Promise.all(localUnique.map(localRepoStatus));
+    repos.sort((a, b) => a.name.localeCompare(b.name));
+    groups.push({ host: "local", distro: null, label: os.hostname(), repos });
+  }
+  const distros = await listWslDistrosVerbose();
+  for (const d of distros) {
+    if (!/running/i.test(d.state)) {
+      continue;
+    }
+    const repos = await wslRepoStatuses(d.name);
+    repos.sort((a, b) => a.name.localeCompare(b.name));
+    groups.push({ host: "wsl", distro: d.name, label: d.name, repos });
+  }
+  return groups;
+}
+
+let reposCache = { at: 0, data: [] };
+let reposComputing = false;
+
+// ---------------------------------------------------------------------------
 // session lifecycle
 // ---------------------------------------------------------------------------
 
@@ -1077,6 +1167,20 @@ const server = http.createServer(async (req, res) => {
   // Session history (browse past sessions saved on disk)
   if (pathname === "/api/history" && method === "GET") {
     sendJson(res, 200, { root: SESSIONS_DIR, sessions: listHistory() });
+    return;
+  }
+  if (pathname === "/api/repos" && method === "GET") {
+    // Return the cached repo list immediately; refresh in the background when stale (git status
+    // across repos is slow, so we never block the request on it).
+    const fresh = now() - reposCache.at < 12000;
+    if (!fresh && !reposComputing) {
+      reposComputing = true;
+      computeRepos()
+        .then((data) => { reposCache = { at: now(), data }; })
+        .catch(() => {})
+        .finally(() => { reposComputing = false; });
+    }
+    sendJson(res, 200, { groups: reposCache.data, computing: reposComputing && !fresh });
     return;
   }
   if (pathname === "/api/history/item" && method === "GET") {

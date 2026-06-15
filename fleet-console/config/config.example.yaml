@@ -20,3 +20,7 @@ usage:
 continue:
   bufferSeconds: 30       # wait this long after the reset before auto-continuing
   minIntervalSeconds: 300 # minimum gap between auto-continues for a session
+
+repos:
+  localRoots: ["E:/GitHub"]  # Windows folders scanned for the Repositories panel (git repos + status)
+  maxDepth: 3                # how deep under each root to look for repos

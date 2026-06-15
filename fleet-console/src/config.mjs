@@ -18,6 +18,8 @@ const DEFAULTS = {
   sessions: { dir: "E:/Sessions/Claude" },
   usage: { pollSeconds: 5 },
   continue: { bufferSeconds: 30, minIntervalSeconds: 300 },
+  // Local roots scanned for the Repositories panel (Windows host); WSL repos come from running distros.
+  repos: { localRoots: ["E:/GitHub"], maxDepth: 3 },
 };
 
 /** Coerce a scalar YAML value to a JS string/number/boolean/null. */
