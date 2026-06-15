@@ -57,18 +57,20 @@ missing, installs Python 3.13 through `uv`, removes any existing `.venv` / `pypr
 
 ## Usage
 
+Create a folder of task markdown files (e.g. `instructions/my-tasks/`), then:
+
 ```powershell
 # Validate the configuration (and optionally an instructions folder)
-.\scripts\orchestrator.ps1 validate --instructions-subfolder instructions/example
+.\scripts\orchestrator.ps1 validate --instructions-subfolder instructions/my-tasks
 
 # Preview the plan and the scope decisions without spawning any agents
-.\scripts\orchestrator.ps1 run instructions/example --dry-run
+.\scripts\orchestrator.ps1 run instructions/my-tasks --dry-run
 
 # Run now (skip the start wait; the end deadline still applies)
-.\scripts\orchestrator.ps1 run instructions/example --now
+.\scripts\orchestrator.ps1 run instructions/my-tasks --now
 
 # Run on schedule (waits until schedule.start, stops at schedule.end)
-.\scripts\orchestrator.ps1 run instructions/example
+.\scripts\orchestrator.ps1 run instructions/my-tasks
 ```
 
 Equivalently, without the wrapper: `uv run python scripts/orchestrator.py <command>`.
@@ -100,8 +102,6 @@ push: true                # optional per-task override
 ...free-form instructions the agent reads and executes...
 ```
 
-See `instructions/example/001_task.md` for a complete example.
-
 ## How scoping is enforced
 
 The runner sets the agent's working directory to the task repository and adds the readable
@@ -115,16 +115,11 @@ not merely requested in the prompt.
 
 ```
 config/                      Example YAML configuration (CLI)
-instructions/                Where you drop task markdown files (CLI)
 scripts/                     uv bootstrap, the CLI entry point, and fleet-console launchers
 src/orchestrator/            The CLI application package (one module per responsibility)
-tests/                       Unit tests (scope and permissions are safety-critical)
 fleet-console/               The web app — see fleet-console/README.md
 agent-fleet/                 VS Code-window fleet monitor + dashboard — see agent-fleet/README.md
 ```
 
-## Tests
-
-```powershell
-uv run pytest
-```
+You create your own folder of task markdown files (e.g. `instructions/my-tasks/`); it is
+gitignored, so your tasks stay local.

@@ -228,8 +228,7 @@ uv.lock
 config/*
 !config/orchestrator.example.yaml
 
-# instructions: only keep the example folder, ignore personal ones
-instructions/*
-!instructions/example/
+# CLI task folders are personal — keep them local
+instructions/
 
 logs/
