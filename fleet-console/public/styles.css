@@ -118,6 +118,21 @@ details[open] > .tree-summary::before { transform: rotate(90deg); }
 .tree-leaf .name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-leaf .badge { font-size: 10px; padding: 1px 6px; border-radius: 999px; background: var(--bg); }
 .tree-leaf .leaf-meta { margin-left: auto; font-size: 11px; color: var(--muted); }
+.tree-leaf .arb-icon, .tree-summary { vertical-align: middle; }
+
+/* react-arborist rows */
+.arb-tree { outline: none; }
+.arb-row {
+  display: flex; align-items: center; gap: 6px; padding: 0 6px; height: 100%;
+  border-radius: 6px; cursor: pointer; font-size: 13px; box-sizing: border-box;
+}
+.arb-row:hover { background: var(--panel-2); }
+.arb-row.active { background: var(--panel-2); box-shadow: inset 0 0 0 1px var(--accent); }
+.arb-row .arb-arrow { width: 10px; flex: 0 0 auto; font-size: 9px; color: var(--muted); }
+.arb-row .arb-icon { flex: 0 0 auto; font-size: 13px; }
+.arb-row .arb-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.arb-row .badge { flex: 0 0 auto; font-size: 10px; padding: 1px 6px; border-radius: 999px; background: var(--bg); }
+.arb-row .arb-meta { margin-left: auto; flex: 0 0 auto; font-size: 11px; color: var(--muted); }
 .session-item .sub { color: var(--muted); font-size: 11px; margin-top: 4px; word-break: break-all; }
 .session-item .timer { color: var(--amber); font-variant-numeric: tabular-nums; font-size: 12px; }
 

@@ -857,63 +857,22 @@ el("f-create").addEventListener("click", async () => {
   }
 });
 
-// ---- past sessions in the sidebar ------------------------------------------
+// ---- past sessions in the sidebar (react-arborist tree, CDN-loaded) --------
 
 let viewingRel = null;
 
-/** A clickable leaf for one saved session. */
-function treeLeaf(s) {
-  const item = document.createElement("div");
-  item.className = "tree-leaf" + (s.rel === viewingRel ? " active" : "");
-  item.innerHTML =
-    `<span class="name">${escapeHtml(s.title)}</span>` +
-    `<span class="badge ${escapeHtml(s.status || "")}">${escapeHtml(s.status || "saved")}</span>` +
-    `<span class="leaf-meta">${s.messages}</span>`;
-  item.addEventListener("click", () => viewPastSession(s.rel));
-  return item;
-}
-
-/** Build a collapsible <details> group for a tree level (object of children, or array of leaves). */
-function treeNode(label, node, depth) {
-  const details = document.createElement("details");
-  details.className = "tree-group";
-  details.open = depth < 2; // host/group expanded by default; repos collapsed
-  const summary = document.createElement("summary");
-  summary.className = "tree-summary";
-  summary.style.paddingLeft = 4 + depth * 10 + "px";
-  summary.textContent = label;
-  details.appendChild(summary);
-  if (Array.isArray(node)) {
-    for (const s of node) {
-      const leaf = treeLeaf(s);
-      leaf.style.paddingLeft = 8 + (depth + 1) * 10 + "px";
-      details.appendChild(leaf);
-    }
-  } else {
-    for (const k of Object.keys(node).sort()) {
-      details.appendChild(treeNode(k, node[k], depth + 1));
-    }
-  }
-  return details;
-}
-
-/** List saved sessions in the sidebar as a host/group/repo tree (excluding live ones). */
-async function renderHistorySidebar() {
-  const listEl = el("history-list-side");
-  if (!listEl) return;
-  const data = await getJson("/api/history");
+/** Saved sessions not currently live, as a flat list. */
+function computePast(data) {
   const sessions = (data && data.sessions) || [];
   const liveDirs = (latest && latest.sessions ? latest.sessions : []).map((s) => (s.sessionDir || "").replace(/\\/g, "/"));
-  const past = sessions.filter((s) => {
+  return sessions.filter((s) => {
     const rel = (s.rel || "").replace(/\\/g, "/");
     return rel && !liveDirs.some((d) => d.endsWith(rel));
   });
-  listEl.innerHTML = "";
-  if (!past.length) {
-    listEl.innerHTML = '<div class="muted-note" style="padding:4px 2px">none yet</div>';
-    return;
-  }
-  // Group into hostKind -> group -> repo -> [sessions].
+}
+
+/** Group flat sessions into hostKind -> group -> repo -> [sessions]. */
+function groupPast(past) {
   const tree = {};
   for (const s of past) {
     const hk = s.hostKind || "?";
@@ -924,9 +883,167 @@ async function renderHistorySidebar() {
     tree[hk][g][r] = tree[hk][g][r] || [];
     tree[hk][g][r].push(s);
   }
-  for (const hk of Object.keys(tree).sort()) {
-    listEl.appendChild(treeNode(hk, tree[hk], 0));
+  return tree;
+}
+
+/** Convert the grouped object into react-arborist node data ({id, name, children?}). */
+function toArboristNodes(obj, prefix) {
+  return Object.keys(obj).sort().map((key) => {
+    const id = prefix ? prefix + "/" + key : key;
+    const val = obj[key];
+    if (Array.isArray(val)) {
+      return {
+        id,
+        name: key,
+        children: val.map((s) => ({ id: s.rel, name: s.title, rel: s.rel, status: s.status, messages: s.messages })),
+      };
+    }
+    return { id, name: key, children: toArboristNodes(val, id) };
+  });
+}
+
+function countArborist(nodes) {
+  let n = 0;
+  for (const x of nodes) {
+    n++;
+    if (x.children) n += countArborist(x.children);
   }
+  return n;
+}
+
+// Lazy-load React + react-arborist from a CDN once (the app is zero-build, so no local bundler).
+let arbor = null;
+let arborRoot = null;
+let arborFailed = false;
+async function loadArborist() {
+  if (arbor || arborFailed) return arbor;
+  try {
+    const [reactMod, domMod, arbMod, htmMod] = await Promise.all([
+      import("https://esm.sh/react@18.3.1"),
+      import("https://esm.sh/react-dom@18.3.1/client"),
+      import("https://esm.sh/react-arborist@3.4.0?deps=react@18.3.1,react-dom@18.3.1"),
+      import("https://esm.sh/htm@3.1.1"),
+    ]);
+    const R = reactMod.default || reactMod;
+    const html = (htmMod.default || htmMod).bind(R.createElement);
+    arbor = { R, html, createRoot: domMod.createRoot, Tree: arbMod.Tree };
+  } catch {
+    arborFailed = true; // offline / CDN blocked → fall back to the plain tree
+    arbor = null;
+  }
+  return arbor;
+}
+
+/** react-arborist row renderer: folder/chat icons, name, status badge, message count. */
+function nodeRenderer(a, info) {
+  const { node, style, dragHandle } = info;
+  const d = node.data;
+  const internal = node.isInternal;
+  const arrow = internal ? (node.isOpen ? "▾" : "▸") : "";
+  const icon = internal ? (node.isOpen ? "📂" : "📁") : "💬";
+  const cls = "arb-row" + (!internal && d.rel === viewingRel ? " active" : "");
+  const onClick = () => (internal ? node.toggle() : viewPastSession(d.rel));
+  return a.html`<div ref=${dragHandle} style=${style} class=${cls} title=${d.name} onClick=${onClick}>
+    <span class="arb-arrow">${arrow}</span>
+    <span class="arb-icon">${icon}</span>
+    <span class="arb-name">${d.name}</span>
+    ${internal
+      ? null
+      : a.html`<span class=${"badge " + (d.status || "")}>${d.status || "saved"}</span><span class="arb-meta">${d.messages}</span>`}
+  </div>`;
+}
+
+function renderArborist(a, listEl, past) {
+  try {
+    if (!arborRoot) arborRoot = a.createRoot(listEl);
+    if (!past.length) {
+      arborRoot.render(a.html`<div class="muted-note" style=${{ padding: "4px 2px" }}>none yet</div>`);
+      return true;
+    }
+    const treeData = toArboristNodes(groupPast(past), "");
+    const width = Math.max(160, (listEl.clientWidth || 270) - 2);
+    const height = Math.min(countArborist(treeData) * 28 + 6, 460);
+    arborRoot.render(a.html`<${a.Tree}
+      data=${treeData}
+      openByDefault=${true}
+      width=${width}
+      height=${height}
+      indent=${14}
+      rowHeight=${28}
+      disableDrag=${true}
+      disableDrop=${true}
+      disableMultiSelection=${true}
+      className="arb-tree"
+    >${(p) => nodeRenderer(a, p)}</>`);
+    // Safety net: a React render error doesn't always throw synchronously (it can just render
+    // nothing). If no rows appeared shortly after, abandon arborist and use the plain tree.
+    setTimeout(() => {
+      if (arborRoot && past.length && !listEl.querySelector(".arb-row")) {
+        try { arborRoot.unmount(); } catch { /* ignore */ }
+        arborRoot = null;
+        arbor = null;
+        arborFailed = true;
+        renderFallbackTree(listEl, past);
+      }
+    }, 600);
+    return true;
+  } catch {
+    try { if (arborRoot) arborRoot.unmount(); } catch { /* ignore */ }
+    arborRoot = null;
+    arbor = null;
+    arborFailed = true;
+    return false;
+  }
+}
+
+/** Plain DOM fallback tree (used if the CDN React/arborist can't load). */
+function renderFallbackTree(listEl, past) {
+  listEl.innerHTML = "";
+  if (!past.length) {
+    listEl.innerHTML = '<div class="muted-note" style="padding:4px 2px">none yet</div>';
+    return;
+  }
+  const tree = groupPast(past);
+  const renderLevel = (obj, depth, container) => {
+    for (const key of Object.keys(obj).sort()) {
+      const val = obj[key];
+      const det = document.createElement("details");
+      det.className = "tree-group";
+      det.open = depth < 2;
+      const sum = document.createElement("summary");
+      sum.className = "tree-summary";
+      sum.style.paddingLeft = 4 + depth * 10 + "px";
+      sum.textContent = (depth === 0 ? "🖥 " : Array.isArray(val) ? "📁 " : "") + key;
+      det.appendChild(sum);
+      if (Array.isArray(val)) {
+        for (const s of val) {
+          const leaf = document.createElement("div");
+          leaf.className = "tree-leaf" + (s.rel === viewingRel ? " active" : "");
+          leaf.style.paddingLeft = 8 + (depth + 1) * 10 + "px";
+          leaf.innerHTML =
+            `<span class="arb-icon">💬</span><span class="name">${escapeHtml(s.title)}</span>` +
+            `<span class="badge ${escapeHtml(s.status || "")}">${escapeHtml(s.status || "saved")}</span>` +
+            `<span class="leaf-meta">${s.messages}</span>`;
+          leaf.addEventListener("click", () => viewPastSession(s.rel));
+          det.appendChild(leaf);
+        }
+      } else {
+        renderLevel(val, depth + 1, det);
+      }
+      container.appendChild(det);
+    }
+  };
+  renderLevel(tree, 0, listEl);
+}
+
+/** List saved sessions in the sidebar (excluding live ones) — react-arborist tree, with fallback. */
+async function renderHistorySidebar() {
+  const listEl = el("history-list-side");
+  if (!listEl) return;
+  const past = computePast(await getJson("/api/history"));
+  const a = await loadArborist();
+  if (a && renderArborist(a, listEl, past)) return;
+  renderFallbackTree(listEl, past);
 }
 
 /** Render a saved session's conversation into the main chat area, read-only. */
