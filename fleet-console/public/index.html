@@ -16,12 +16,6 @@
     <div class="account">
       <span class="label">Account reset</span>
       <span id="account-countdown" class="countdown">—</span>
-      <button id="btn-continue-all" class="primary">Continue all</button>
-      <button id="btn-set-reset">Set reset…</button>
-      <button id="btn-controls">Controls</button>
-      <button id="btn-commands">Commands</button>
-      <button id="btn-history">History</button>
-      <button id="btn-new">New session</button>
     </div>
   </header>
 
@@ -60,12 +54,16 @@
       </form>
     </section>
 
-    <aside id="cmdbar" class="cmdbar hidden">
+    <aside id="cmdbar" class="cmdbar">
+      <div class="rb-global">
+        <button id="btn-new" class="primary">＋ New session</button>
+        <button id="btn-history">🕘 History</button>
+        <button id="btn-continue-all">⏩ Continue all</button>
+        <button id="btn-set-reset">⏰ Set reset…</button>
+      </div>
       <div class="rb-tabs">
         <button class="rb-tab active" data-tab="controls">Controls</button>
         <button class="rb-tab" data-tab="commands">Commands</button>
-        <span class="rb-spacer"></span>
-        <button id="rb-close" title="Close">✕</button>
       </div>
       <div id="rb-controls" class="rb-pane"></div>
       <div id="rb-commands" class="rb-pane hidden">

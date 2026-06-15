@@ -144,6 +144,9 @@ details[open] > .tree-summary::before { transform: rotate(90deg); }
   background: var(--panel); display: flex; flex-direction: column; min-height: 0;
 }
 .cmdbar.hidden { display: none; }
+.rb-global { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-bottom: 1px solid var(--border); }
+.rb-global button { width: 100%; text-align: left; }
+.rb-note { font-size: 12px; color: var(--muted); line-height: 1.4; }
 .rb-tabs { display: flex; align-items: center; gap: 4px; padding: 8px 8px 0; border-bottom: 1px solid var(--border); }
 .rb-tabs .rb-spacer { flex: 1; }
 .rb-tab { background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--muted); cursor: pointer; padding: 6px 10px; font-size: 13px; min-height: auto; border-radius: 0; }

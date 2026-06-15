@@ -607,19 +607,40 @@ function renderChatHeader(s) {
 
 let lastControlsSig = null;
 
-/** Render the session controls (mode/model + actions) into the right "Controls" pane. */
+/** Render the session controls into the right "Controls" pane — for a live session, a past session
+ *  (Resume), or nothing selected. */
 function renderControls(s) {
   if (!rbControlsEl) return;
-  if (!s) {
-    rbControlsEl.innerHTML = '<div class="rb-hint">Select or create a session to see its controls.</div>';
-    lastControlsSig = null;
-    return;
-  }
   const models = (latest && latest.models) || [];
-  // Only rebuild when something changed, so the <select>s don't reset/close on every poll.
-  const sig = [s.id, s.status, s.permissionMode, s.model, models.length].join("|");
+  // Stable signature so the <select>s don't reset/close on every poll; covers all three states.
+  const sig = s
+    ? "live|" + [s.id, s.status, s.permissionMode, s.model, models.length].join("|")
+    : viewingRel
+      ? "past|" + viewingRel
+      : "none";
   if (sig === lastControlsSig) return;
   lastControlsSig = sig;
+
+  // Past (saved) session: the meaningful control is Resume — bring it live, then full controls show.
+  if (!s) {
+    if (viewingRel) {
+      rbControlsEl.innerHTML =
+        `<div class="rb-section"><div class="rb-note">Saved session — resume it to continue chatting.</div></div>
+         <div class="rb-actions"><button id="ctl-resume" class="primary">▸ Resume session</button></div>`;
+      el("ctl-resume").addEventListener("click", async () => {
+        const r = await api("/api/history/resume", { rel: viewingRel });
+        if (r && r.ok && r.id) {
+          await pollFleet();
+          selectSession(r.id);
+        } else {
+          alert("Could not resume this session.");
+        }
+      });
+    } else {
+      rbControlsEl.innerHTML = '<div class="rb-hint">Select or create a session to see its controls.</div>';
+    }
+    return;
+  }
 
   const modeOpts = MODE_OPTIONS.map(
     (m) => `<option value="${m.value}" ${m.value === (s.permissionMode || "default") ? "selected" : ""}>${escapeHtml(m.label)}</option>`
@@ -630,16 +651,16 @@ function renderControls(s) {
   }
   rbControlsEl.innerHTML =
     `<div class="rb-section">
-       <label class="rb-label">Permission mode</label>
+       <label class="rb-label">⚙ Permission mode</label>
        <select id="ctl-mode" class="hdr-select">${modeOpts}</select>
-       <label class="rb-label">Model</label>
+       <label class="rb-label">🧠 Model</label>
        <select id="ctl-model" class="hdr-select">${modelOpts}</select>
      </div>
      <div class="rb-actions">
        <button id="ctl-instr">📄 Instructions</button>
        <button id="ctl-stop" class="rb-stop">⏹ Stop current task</button>
-       <button id="ctl-continue">▸ Continue</button>
-       <button id="ctl-restart">↻ Restart runner</button>
+       <button id="ctl-continue">▶ Continue</button>
+       <button id="ctl-restart">🔄 Restart runner</button>
        <button id="ctl-end" class="rb-end">⏏ End session</button>
      </div>`;
   el("ctl-mode").addEventListener("change", async (e) => {
@@ -1221,6 +1242,7 @@ async function viewPastSession(rel) {
   for (const n of sessionsEl.children) n.classList.remove("active");
   renderHistorySidebar();
   updateComposer(); // read-only past view → disable the composer with a hint
+  renderControls(null); // show the Resume control for this past session
   renderStatusBar();
   if (workingEl) workingEl.classList.add("hidden");
   messagesEl.innerHTML = '<div class="msg system">Loading…</div>';
@@ -1308,13 +1330,6 @@ function setRightTab(tab) {
   if (tab === "controls") renderControls(latest && selectedId ? latest.sessions.find((x) => x.id === selectedId) : null);
   if (tab === "commands") renderCommands();
 }
-function openRightPanel(tab) {
-  cmdbarEl.classList.remove("hidden");
-  setRightTab(tab);
-}
-el("btn-controls").addEventListener("click", () => openRightPanel("controls"));
-el("btn-commands").addEventListener("click", () => openRightPanel("commands"));
-el("rb-close").addEventListener("click", () => cmdbarEl.classList.add("hidden"));
 for (const t of document.querySelectorAll(".rb-tab")) {
   t.addEventListener("click", () => setRightTab(t.dataset.tab));
 }
@@ -1458,6 +1473,7 @@ function tick() {
 
 renderStatusBar();
 updateComposer();
+renderControls(null); // populate the always-visible Controls pane before the first poll
 connectFleet();
 pollFleet();
 renderWslList();
