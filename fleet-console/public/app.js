@@ -57,7 +57,9 @@ function fmtCountdown(target) {
 }
 
 function escapeHtml(s) {
-  return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  // Escape quotes too: rendered text goes through innerHTML and some of it lands in attribute
+  // context (e.g. a markdown link href), where an unescaped " would allow attribute breakout.
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 // ---- minimal, dependency-free markdown renderer (Claude's output is markdown) --------------
@@ -82,6 +84,161 @@ function mdInline(s) {
 
 const isTableSep = (l) => /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?\s*$/.test(l);
 
+// ---- lightweight syntax highlighting for fenced code blocks --------------------------------
+// Tokenizes RAW source and emits HTML-escaped, span-wrapped tokens, so highlighting can never
+// inject markup. YAML has a dedicated line highlighter; common languages share a tokenizer.
+
+const cspan = (cls, text) => `<span class="tok-${cls}">${escapeHtml(text)}</span>`;
+
+const JS_KW = ["const", "let", "var", "function", "return", "if", "else", "for", "while", "await", "async", "import", "export", "from", "new", "class", "try", "catch", "switch", "case", "break", "this", "typeof", "true", "false", "null", "undefined"];
+const SH_KW = ["if", "then", "else", "elif", "fi", "for", "in", "do", "done", "case", "esac", "while", "function", "return", "export", "local", "echo", "cd", "set"];
+const PS_KW = ["if", "else", "elseif", "foreach", "function", "return", "param", "try", "catch", "throw", "Write-Host"];
+const GENERIC_LANGS = {
+  json: { line: null, block: false, keywords: ["true", "false", "null"] },
+  bash: { line: "#", block: false, keywords: SH_KW },
+  sh: { line: "#", block: false, keywords: SH_KW },
+  shell: { line: "#", block: false, keywords: SH_KW },
+  powershell: { line: "#", block: false, keywords: PS_KW },
+  ps1: { line: "#", block: false, keywords: PS_KW },
+  js: { line: "//", block: true, keywords: JS_KW },
+  mjs: { line: "//", block: true, keywords: JS_KW },
+  javascript: { line: "//", block: true, keywords: JS_KW },
+  ts: { line: "//", block: true, keywords: JS_KW },
+  typescript: { line: "//", block: true, keywords: JS_KW },
+};
+
+// Skip highlighting very large blocks (just escape) — keeps rendering snappy and is a hard backstop
+// against pathological inputs.
+const HIGHLIGHT_MAX = 40000;
+
+function highlightCode(code, lang) {
+  lang = (lang || "").toLowerCase();
+  if (code.length > HIGHLIGHT_MAX) return escapeHtml(code);
+  if (lang === "yaml" || lang === "yml") return highlightYaml(code);
+  const cfg = GENERIC_LANGS[lang];
+  return cfg ? highlightGeneric(code, cfg) : escapeHtml(code);
+}
+
+function hlWords(escaped, kwRe) {
+  return kwRe ? escaped.replace(kwRe, '<span class="tok-keyword">$1</span>') : escaped;
+}
+
+/** Tokenize a segment that contains no block comments (strings, line comments, numbers, keywords). */
+function tokenizeSegment(src, cfg, kwRe) {
+  const parts = [];
+  if (cfg.line === "//") parts.push("//[^\\n]*");
+  if (cfg.line === "#") parts.push("#[^\\n]*");
+  parts.push('"(?:[^"\\\\]|\\\\.)*"', "'(?:[^'\\\\]|\\\\.)*'", "`(?:[^`\\\\]|\\\\.)*`", "\\b\\d+(?:\\.\\d+)*\\b");
+  const tokenRe = new RegExp(parts.join("|"), "g");
+  let out = "";
+  let last = 0;
+  let m;
+  while ((m = tokenRe.exec(src))) {
+    if (m[0].length === 0) { tokenRe.lastIndex++; continue; }
+    out += hlWords(escapeHtml(src.slice(last, m.index)), kwRe);
+    const tok = m[0];
+    let cls = "string";
+    if (tok.startsWith("//") || tok.startsWith("#")) cls = "comment";
+    else if (/^\d/.test(tok)) cls = "num";
+    out += cspan(cls, tok);
+    last = m.index + tok.length;
+  }
+  return out + hlWords(escapeHtml(src.slice(last)), kwRe);
+}
+
+function highlightGeneric(src, cfg) {
+  const kwRe = cfg.keywords && cfg.keywords.length ? new RegExp("\\b(" + cfg.keywords.join("|") + ")\\b", "g") : null;
+  if (!cfg.block) {
+    return tokenizeSegment(src, cfg, kwRe);
+  }
+  // Extract /* */ block comments with a linear scan (a backtracking regex over the whole string is
+  // O(n^2) on many unterminated "/*" openers and can freeze the tab).
+  let out = "";
+  let idx = 0;
+  for (;;) {
+    const start = src.indexOf("/*", idx);
+    if (start === -1) {
+      out += tokenizeSegment(src.slice(idx), cfg, kwRe);
+      break;
+    }
+    out += tokenizeSegment(src.slice(idx, start), cfg, kwRe);
+    let end = src.indexOf("*/", start + 2);
+    end = end === -1 ? src.length : end + 2;
+    out += cspan("comment", src.slice(start, end));
+    idx = end;
+  }
+  return out;
+}
+
+function highlightYaml(src) {
+  const lines = src.split("\n");
+  const out = [];
+  let blockIndent = -1; // >=0 while inside a "|"/">" block scalar; deeper-indented lines are literal
+  for (const line of lines) {
+    if (blockIndent >= 0) {
+      const indent = line.length - line.trimStart().length;
+      if (line.trim() === "" || indent > blockIndent) {
+        out.push(cspan("string", line)); // literal block-scalar content
+        continue;
+      }
+      blockIndent = -1; // dedent ends the block
+    }
+    out.push(highlightYamlLine(line));
+    // A value of "|", ">", "|-", ">2", etc. starts a block scalar; following deeper lines are literal.
+    if (/:\s*[|>][+-]?\d*\s*$/.test(line)) {
+      blockIndent = line.length - line.trimStart().length;
+    }
+  }
+  return out.join("\n");
+}
+
+/** Index of an inline "#" comment in a YAML line (preceded by whitespace, not inside quotes). */
+function yamlCommentIndex(line) {
+  let quote = null;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === "#" && (i === 0 || /\s/.test(line[i - 1]))) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function yamlValue(v) {
+  const lead = v.slice(0, v.length - v.trimStart().length);
+  const trail = v.slice(v.trimEnd().length); // preserve trailing whitespace (don't drop characters)
+  const t = v.trim();
+  if (t === "") return escapeHtml(v);
+  let cls = "plain";
+  if (/^(true|false|null|~|yes|no|on|off)$/i.test(t)) cls = "bool";
+  else if (/^-?\d+(\.\d+)?$/.test(t)) cls = "num";
+  else if (/^(".*"|'.*')$/.test(t)) cls = "string";
+  return escapeHtml(lead) + cspan(cls, t) + escapeHtml(trail);
+}
+
+function highlightYamlLine(line) {
+  const full = line.match(/^(\s*)(#.*)$/);
+  if (full) return escapeHtml(full[1]) + cspan("comment", full[2]);
+  const ci = yamlCommentIndex(line);
+  const body = ci === -1 ? line : line.slice(0, ci);
+  const tail = ci === -1 ? "" : cspan("comment", line.slice(ci));
+  const kv = body.match(/^(\s*)(-\s+)?([^:#\s][^:]*?):(\s|$)(.*)$/);
+  if (kv) {
+    const [, indent, dash, key, sep, value] = kv;
+    let h = escapeHtml(indent);
+    if (dash) h += cspan("punct", "-") + escapeHtml(dash.slice(1));
+    h += cspan("key", key) + cspan("punct", ":") + escapeHtml(sep) + yamlValue(value);
+    return h + tail;
+  }
+  const li = body.match(/^(\s*)(-\s+)(.*)$/);
+  if (li) return escapeHtml(li[1]) + cspan("punct", "-") + escapeHtml(li[2].slice(1)) + yamlValue(li[3]) + tail;
+  return escapeHtml(body) + tail;
+}
+
 /** Block-level markdown → HTML: headings, lists, tables, code fences, blockquotes, paragraphs. */
 function mdToHtml(src) {
   const lines = String(src == null ? "" : src).replace(/\r\n?/g, "\n").split("\n");
@@ -94,13 +251,16 @@ function mdToHtml(src) {
     const line = lines[i];
     if (/^\s*$/.test(line)) { i++; continue; }
 
-    const fence = line.match(/^\s*```/);
+    const fence = line.match(/^\s*```\s*([\w+-]*)/);
     if (fence) {
+      const lang = (fence[1] || "").toLowerCase();
       const buf = [];
       i++;
-      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) buf.push(lines[i++]);
+      // Close on any line that starts with ``` (mirrors the loose open) so a fence with trailing
+      // text or extra backticks still closes instead of swallowing the rest of the message.
+      while (i < lines.length && !/^\s*```/.test(lines[i])) buf.push(lines[i++]);
       i++;
-      out.push(`<pre><code>${escapeHtml(buf.join("\n"))}</code></pre>`);
+      out.push(`<pre class="code"><code class="lang-${lang || "text"}">${highlightCode(buf.join("\n"), lang)}</code></pre>`);
       continue;
     }
 
