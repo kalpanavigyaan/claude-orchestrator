@@ -67,20 +67,21 @@ function setConnected(on) {
 // ---- account usage card ----------------------------------------------------
 
 const WINDOW_LABELS = {
-  five_hour: "5-hour limit",
-  seven_day: "Weekly limit",
-  seven_day_oauth: "Weekly limit",
+  five_hour: "Current session · 5h",
+  seven_day: "Weekly · all models",
   seven_day_opus: "Weekly · Opus",
-  opus_weekly: "Weekly · Opus",
+  seven_day_sonnet: "Weekly · Sonnet",
+  seven_day_oauth_apps: "Weekly · apps",
 };
+// Display order; any window not listed is appended after these.
+const WINDOW_ORDER = ["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet"];
 function windowLabel(type) {
   if (WINDOW_LABELS[type]) return WINDOW_LABELS[type];
   return String(type || "Usage").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
-function usagePct(u) {
+function clampPct(u) {
   if (typeof u !== "number" || !isFinite(u)) return null;
-  const v = u <= 1 ? u * 100 : u;
-  return Math.max(0, Math.min(100, v));
+  return Math.max(0, Math.min(100, u)); // /usage utilization is already a 0-100 percentage
 }
 function fmtTokens(n) {
   n = n || 0;
@@ -92,8 +93,14 @@ function fmtTokens(n) {
 function renderUsage() {
   if (!usageBarEl) return;
   const u = latest && latest.usage;
-  const windows = (u && u.windows) || [];
   const totals = (u && u.totals) || { costUsd: 0, inputTokens: 0, outputTokens: 0 };
+  const windows = ((u && u.windows) || [])
+    .slice()
+    .sort((a, b) => {
+      const ia = WINDOW_ORDER.indexOf(a.type);
+      const ib = WINDOW_ORDER.indexOf(b.type);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    });
   const hasTotals = totals.costUsd > 0 || totals.inputTokens > 0 || totals.outputTokens > 0;
   if (!windows.length && !hasTotals) {
     usageBarEl.classList.add("hidden");
@@ -104,29 +111,27 @@ function renderUsage() {
 
   let html = "";
   for (const w of windows) {
-    const p = usagePct(w.utilization);
-    const cls = p == null ? "" : p >= 90 ? "high" : p >= 70 ? "warn" : "";
-    const status = w.status || "—";
-    const bar = p == null ? "" :
-      `<div class="uc-bar"><div class="uc-fill ${cls}" style="width:${p.toFixed(0)}%"></div></div>`;
+    const p = clampPct(w.utilization);
+    if (p == null) continue;
+    const cls = p >= 90 ? "high" : p >= 70 ? "warn" : "";
     html +=
       `<div class="usage-card">
         <div class="uc-head">
           <span class="uc-title">${escapeHtml(windowLabel(w.type))}</span>
-          <span class="uc-pill ${escapeHtml(status)}">${escapeHtml(String(status).replace(/_/g, " "))}</span>
+          <span class="uc-pct ${cls}">${p.toFixed(0)}%</span>
         </div>
-        ${bar}
+        <div class="uc-bar"><div class="uc-fill ${cls}" style="width:${p.toFixed(0)}%"></div></div>
         <div class="uc-meta">
-          <span>${p == null ? "—" : p.toFixed(0) + "% used"}</span>
+          <span>${p.toFixed(0)}% used</span>
           <span class="usage-reset" data-reset="${w.resetAt || ""}">${w.resetAt ? "resets " + fmtCountdown(w.resetAt) : ""}</span>
         </div>
-        ${w.isUsingOverage ? '<div class="uc-sub">⚠ using overage</div>' : ""}
       </div>`;
   }
   const nSessions = (latest && latest.sessions ? latest.sessions.length : 0);
+  const plan = u && u.subscriptionType ? ` · ${escapeHtml(String(u.subscriptionType))} plan` : "";
   html +=
     `<div class="usage-card totals">
-      <div class="uc-head"><span class="uc-title">This run</span></div>
+      <div class="uc-head"><span class="uc-title">This run${plan}</span></div>
       <div class="uc-big">$${(totals.costUsd || 0).toFixed(4)}</div>
       <div class="uc-sub">${fmtTokens(totals.inputTokens)} in · ${fmtTokens(totals.outputTokens)} out · ${nSessions} session${nSessions === 1 ? "" : "s"}</div>
     </div>`;

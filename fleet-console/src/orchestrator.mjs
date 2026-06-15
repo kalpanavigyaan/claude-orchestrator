@@ -61,8 +61,14 @@ const sessions = new Map();
 /** Fleet-level SSE subscribers. */
 const fleetSse = new Set();
 let manualAccountReset = null;
-/** Latest account usage per rate-limit window (keyed by rateLimitType). */
+/**
+ * Latest account-wide plan usage, from the SDK's /usage data (same across sessions/devices). Keyed
+ * by window (five_hour, seven_day, seven_day_opus, …); each value is { type, utilization (0-100),
+ * resetAt (ms) }.
+ */
 const accountUsage = new Map();
+let accountSubscription = null;
+let accountRateLimitsAvailable = false;
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -70,14 +76,6 @@ const accountUsage = new Map();
 
 function now() {
   return Date.now();
-}
-
-/** Normalize an epoch value (seconds or ms) to ms; null if absent/invalid. */
-function epochMs(value) {
-  if (typeof value !== "number" || !isFinite(value)) {
-    return null;
-  }
-  return value < 1e12 ? Math.round(value * 1000) : Math.round(value);
 }
 
 function readBody(req) {
@@ -148,14 +146,19 @@ function sessionSummary(s) {
   };
 }
 
-/** Aggregate cost + tokens across sessions (from each session's last result, this run). */
+/** Aggregate cost + tokens across sessions this run. Cost prefers the SDK's cumulative per-session
+ *  /usage figure (s.usageCost), falling back to the last result's per-turn cost. */
 function aggregateUsage() {
   let costUsd = 0;
   let inputTokens = 0;
   let outputTokens = 0;
   for (const s of sessions.values()) {
-    if (s.lastResult) {
+    if (typeof s.usageCost === "number") {
+      costUsd += s.usageCost;
+    } else if (s.lastResult) {
       costUsd += s.lastResult.cost || 0;
+    }
+    if (s.lastResult) {
       const u = s.lastResult.usage || {};
       inputTokens += u.input_tokens || 0;
       outputTokens += u.output_tokens || 0;
@@ -168,7 +171,12 @@ function fleetSnapshot() {
   return {
     now: now(),
     account: { resetAt: accountResetAt(), manualReset: manualAccountReset },
-    usage: { windows: [...accountUsage.values()], totals: aggregateUsage() },
+    usage: {
+      windows: [...accountUsage.values()],
+      totals: aggregateUsage(),
+      subscriptionType: accountSubscription,
+      available: accountRateLimitsAvailable,
+    },
     sessions: [...sessions.values()].map(sessionSummary),
   };
 }
@@ -675,6 +683,7 @@ function createSession(spec) {
     stdoutRemainder: "",
     runnerConfig,
     lastResult: null,
+    usageCost: null,
     dirty: true,
     proc: null,
   };
@@ -805,18 +814,29 @@ function handleRunnerEvent(s, event) {
         recordMessage(s, { role: "result", text: event.resultText });
       }
       break;
-    case "usage": {
-      const info = event.info || {};
-      const key = info.rateLimitType || "primary";
-      accountUsage.set(key, {
-        type: key,
-        status: info.status ?? null,
-        utilization: typeof info.utilization === "number" ? info.utilization : null,
-        resetAt: epochMs(info.resetsAt),
-        overageStatus: info.overageStatus ?? null,
-        isUsingOverage: info.isUsingOverage ?? null,
-        updatedAt: now(),
-      });
+    case "usage_report": {
+      const report = event.report || {};
+      if (typeof report.sessionCost === "number") {
+        s.usageCost = report.sessionCost;
+      }
+      if (report.subscriptionType) {
+        accountSubscription = report.subscriptionType;
+      }
+      accountRateLimitsAvailable = !!report.available;
+      // rate_limits is account-wide (same across sessions/devices) — latest report wins. Each
+      // window's utilization is already a 0-100 percentage; resets_at is an ISO timestamp.
+      const limits = report.rateLimits || {};
+      for (const [key, w] of Object.entries(limits)) {
+        if (!w || typeof w.utilization !== "number") {
+          continue;
+        }
+        accountUsage.set(key, {
+          type: key,
+          utilization: w.utilization,
+          resetAt: w.resets_at ? Date.parse(w.resets_at) || null : null,
+          updatedAt: now(),
+        });
+      }
       break;
     }
     case "rate_limit":

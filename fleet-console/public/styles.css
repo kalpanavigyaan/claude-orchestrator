@@ -61,10 +61,9 @@ button.primary { background: var(--accent); color: #0b1020; border-color: transp
 }
 .usage-card .uc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .usage-card .uc-title { font-size: 12px; font-weight: 600; }
-.usage-card .uc-pill { margin-left: auto; font-size: 10px; padding: 2px 7px; border-radius: 999px; background: var(--bg); text-transform: capitalize; }
-.uc-pill.allowed { color: var(--green); }
-.uc-pill.allowed_warning { color: var(--amber); }
-.uc-pill.rejected { color: var(--red); }
+.usage-card .uc-pct { margin-left: auto; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--green); }
+.usage-card .uc-pct.warn { color: var(--amber); }
+.usage-card .uc-pct.high { color: var(--red); }
 .usage-card .uc-bar { height: 7px; border-radius: 999px; background: var(--bg); overflow: hidden; margin: 6px 0; }
 .usage-card .uc-fill { height: 100%; background: var(--green); transition: width .4s ease; }
 .usage-card .uc-fill.warn { background: var(--amber); }

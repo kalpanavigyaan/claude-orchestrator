@@ -51,6 +51,34 @@ function emit(event) {
   process.stdout.write(JSON.stringify(event) + "\n");
 }
 
+// The SDK's structured /usage data (session cost + claude.ai plan rate-limit windows: 5-hour,
+// 7-day, per-model). This is a pull, always available — unlike rate_limit_event which only fires
+// on a status transition. The method name is intentionally scary because the API is experimental.
+const USAGE_METHOD = "usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET";
+let sdkSession = null;
+
+/** Pull the structured /usage data and forward it to the orchestrator. Best-effort. */
+async function reportUsage() {
+  const session = sdkSession;
+  if (!session || typeof session[USAGE_METHOD] !== "function") {
+    return;
+  }
+  try {
+    const u = await session[USAGE_METHOD]();
+    emit({
+      type: "usage_report",
+      report: {
+        subscriptionType: u.subscription_type ?? null,
+        available: !!u.rate_limits_available,
+        rateLimits: u.rate_limits || null,
+        sessionCost: u.session ? u.session.total_cost_usd : null,
+      },
+    });
+  } catch {
+    /* experimental endpoint; ignore failures */
+  }
+}
+
 function toEpochMs(value) {
   if (typeof value === "number" && isFinite(value)) {
     return value < 1e12 ? Math.round(value * 1000) : Math.round(value);
@@ -106,9 +134,6 @@ function detectRateLimit(message) {
     return;
   }
   const info = message.rate_limit_info || {};
-  // Forward the full info on EVERY event so the dashboard can show account usage (per window:
-  // status, utilization, reset time), not only when a limit is actually hit.
-  emit({ type: "usage", info });
   if (info.status === "rejected") {
     const resetAt = toEpochMs(info.resetsAt) || findReset(info) || Date.now() + 5 * 60 * 60 * 1000;
     emit({ type: "rate_limit", resetAt, rateLimitType: info.rateLimitType || null });
@@ -144,6 +169,9 @@ rl.on("line", (line) => {
       break;
     case "continue":
       prompt.push({ type: "user", message: { role: "user", content: "continue" } });
+      break;
+    case "get_usage":
+      reportUsage();
       break;
     case "approval": {
       const resolve = pendingApprovals.get(cmd.id);
@@ -201,6 +229,11 @@ async function main() {
 
   try {
     const session = query({ prompt, options });
+    sdkSession = session;
+    // Pull usage shortly after startup and then on a slow cadence, so idle sessions still keep the
+    // dashboard's 5-hour/weekly numbers fresh. Active turns also report (after each result).
+    setTimeout(reportUsage, 8000);
+    setInterval(reportUsage, 90000);
     for await (const message of session) {
       detectRateLimit(message);
       if (message.type === "assistant" && message.message && Array.isArray(message.message.content)) {
@@ -221,6 +254,7 @@ async function main() {
           resultText: message.result ?? null,
         });
         emit({ type: "status", status: "idle" });
+        reportUsage(); // refresh usage windows after each completed turn
       } else if (message.type === "system" || message.type === "status") {
         emit({ type: "log", level: "info", message: message.subtype || message.type });
       }

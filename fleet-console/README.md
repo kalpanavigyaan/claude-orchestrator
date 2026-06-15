@@ -83,6 +83,23 @@ launches the runner with `wsl -d <distro> node <runner> --config …`.
 > guest* and point your browser at it, or extend `hosts.mjs` with an SSH/remote adapter. The
 > guest's sessions render inside the guest OS, so the runner must execute there.
 
+## Account usage (5-hour / weekly) at the top
+
+A usage bar across the top shows your plan's rate-limit windows — **Current session (5-hour)** and
+**Weekly** (plus per-model weekly windows when present) — each with a utilization bar and a live
+reset countdown, alongside a **This run** card (cost + tokens). The numbers come from the SDK's
+structured `/usage` data (the same source as Claude Code's `/usage`), pulled by each runner shortly
+after start, after every turn, and on a slow timer — so they stay current without you hitting a
+limit. They appear once at least one session is running; with no session there is no SDK session to
+query. (The `/usage` API is experimental, so the card degrades gracefully if it is unavailable.)
+
+## Restarting fresh
+
+`scripts/start-fleet-console.ps1` starts the app **fresh**: it stops any instance on the port,
+re-stages the latest runner into every registered WSL distro (the staged runners are copies), then
+launches a clean orchestrator. Use it after pulling changes or if a session gets stuck. It takes the
+same `-Token` / `-BindHost` / `-Port` options as `fleet-console.ps1`, plus `-NoRestage`.
+
 ## How it survives the 5-hour reset
 
 A runner detects the account limit and reports a `resetAt`; the dashboard shows the countdown
