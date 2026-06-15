@@ -60,12 +60,13 @@ function ConvertTo-Mnt([string]$winPath) {
     return ($p -replace '\\', '/')
 }
 
-# Seed config.yaml from the example on first run so there is a file to edit (gitignored).
-$ConfigFile = Join-Path $FleetDirectory "config.yaml"
-$ConfigExample = Join-Path $FleetDirectory "config.example.yaml"
+# Seed config/config.yaml from the example on first run so there is a file to edit (gitignored).
+$ConfigDir = Join-Path $FleetDirectory "config"
+$ConfigFile = Join-Path $ConfigDir "config.yaml"
+$ConfigExample = Join-Path $ConfigDir "config.example.yaml"
 if (-not (Test-Path $ConfigFile) -and (Test-Path $ConfigExample)) {
     Copy-Item $ConfigExample $ConfigFile
-    Write-Host "Created config.yaml from the example — edit it to change port, sessions dir, usage poll, etc." -ForegroundColor Green
+    Write-Host "Created config/config.yaml from the example — edit it to change port, sessions dir, usage poll, etc." -ForegroundColor Green
 }
 
 # 1) Stop any orchestrator already on this port.

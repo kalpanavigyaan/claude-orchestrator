@@ -14,7 +14,8 @@ sessions:
   dir: "E:/Sessions/Claude"   # where per-session folders (json + markdown + instructions) live
 
 usage:
-  pollSeconds: 5          # how often the dashboard refreshes account usage + reset info
+  pollSeconds: 5          # how often to fetch fresh account usage + reset info (spawns a tiny
+                          # throwaway SDK session each time; raise this to reduce overhead)
 
 continue:
   bufferSeconds: 30       # wait this long after the reset before auto-continuing

@@ -1,9 +1,9 @@
 /**
  * Fleet Console configuration.
  *
- * Precedence (highest first): environment variable > config.yaml > config.example.yaml >
- * built-in defaults. config.yaml (gitignored) sits next to package.json; copy config.example.yaml
- * to config.yaml and edit. A tiny YAML reader is used so the app keeps zero runtime dependencies.
+ * Precedence (highest first): environment variable > config/config.yaml > config/config.example.yaml
+ * > built-in defaults. config/config.yaml (gitignored) is your editable copy of
+ * config/config.example.yaml. A tiny YAML reader is used so the app keeps zero runtime dependencies.
  */
 
 import fs from "node:fs";
@@ -81,8 +81,8 @@ function deepMerge(base, over) {
 function loadFile() {
   const candidates = [
     process.env.FLEET_CONFIG,
-    path.join(ROOT, "config.yaml"),
-    path.join(ROOT, "config.example.yaml"),
+    path.join(ROOT, "config", "config.yaml"),
+    path.join(ROOT, "config", "config.example.yaml"),
   ].filter(Boolean);
   for (const file of candidates) {
     try {
