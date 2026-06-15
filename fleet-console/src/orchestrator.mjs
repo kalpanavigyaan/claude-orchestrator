@@ -8,8 +8,7 @@
  * optionally guards everything behind a bearer token.
  *
  * Built-in Node modules only (the Agent SDK lives in the runner). Run: `node src/orchestrator.mjs`.
- * Env: PORT (4318), HOST (127.0.0.1), FLEET_TOKEN (optional), CONTINUE_BUFFER_SECONDS (30),
- *      CONTINUE_MIN_INTERVAL_SECONDS (300).
+ * Configuration lives in config.yaml (see config.example.yaml); env vars still override.
  */
 
 import http from "node:http";
@@ -21,18 +20,20 @@ import os from "node:os";
 import readline from "node:readline";
 import { spawn } from "node:child_process";
 import { buildSpawn, toMnt } from "./hosts.mjs";
+import { config, configSource } from "./config.mjs";
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const RUNNER_PATH = path.join(__dirname, "runner.mjs");
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 
-const PORT = Number(process.env.PORT || 4318);
-const HOST = process.env.HOST || "127.0.0.1";
-const TOKEN = process.env.FLEET_TOKEN || "";
-const BUFFER_MS = Number(process.env.CONTINUE_BUFFER_SECONDS || 30) * 1000;
-const MIN_INTERVAL_MS = Number(process.env.CONTINUE_MIN_INTERVAL_SECONDS || 300) * 1000;
+const PORT = config.server.port;
+const HOST = config.server.host;
+const TOKEN = config.server.token;
+const BUFFER_MS = config.continue.bufferSeconds * 1000;
+const MIN_INTERVAL_MS = config.continue.minIntervalSeconds * 1000;
+const USAGE_POLL_MS = Math.max(1000, config.usage.pollSeconds * 1000);
 const MESSAGE_CAP = 500;
-const SESSIONS_DIR = process.env.SESSIONS_DIR || "E:\\Sessions\\Claude";
+const SESSIONS_DIR = config.sessions.dir;
 try {
   fs.mkdirSync(SESSIONS_DIR, { recursive: true });
 } catch {
@@ -940,10 +941,11 @@ function serveStatic(res, pathname) {
 // ---------------------------------------------------------------------------
 
 const server = http.createServer(async (req, res) => {
-  const parsed = url.parse(req.url, true);
+  // WHATWG URL (url.parse is deprecated, DEP0169). req.url is a path+query; give it any base.
+  const parsed = new URL(req.url || "/", "http://localhost");
   const pathname = parsed.pathname || "/";
   const method = req.method || "GET";
-  const query = parsed.query || {};
+  const query = Object.fromEntries(parsed.searchParams.entries());
 
   if (method === "OPTIONS") {
     sendJson(res, 204, {});
@@ -1235,11 +1237,23 @@ const server = http.createServer(async (req, res) => {
   sendJson(res, 404, { ok: false, reason: "not found" });
 });
 
+/** Ask one live runner for fresh /usage data; the windows are account-wide so one is enough. */
+function usageTick() {
+  for (const s of sessions.values()) {
+    if (runnerAlive(s)) {
+      writeToRunner(s, { type: "get_usage" });
+      return;
+    }
+  }
+}
+
 setInterval(schedulerTick, 1000);
 setInterval(broadcastFleet, 1000);
 setInterval(persistDirtySessions, 1000);
+setInterval(usageTick, USAGE_POLL_MS);
 
 server.listen(PORT, HOST, () => {
   const auth = TOKEN ? " (token required)" : " (no token — set FLEET_TOKEN to lock down)";
   console.log(`[fleet-console] http://${HOST}:${PORT}${auth}`);
+  console.log(`[fleet-console] config: ${configSource} · sessions: ${SESSIONS_DIR} · usage poll: ${USAGE_POLL_MS / 1000}s`);
 });

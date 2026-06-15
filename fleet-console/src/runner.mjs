@@ -230,10 +230,9 @@ async function main() {
   try {
     const session = query({ prompt, options });
     sdkSession = session;
-    // Pull usage shortly after startup and then on a slow cadence, so idle sessions still keep the
-    // dashboard's 5-hour/weekly numbers fresh. Active turns also report (after each result).
+    // Report usage once shortly after startup (fast first paint) and after every turn. The
+    // orchestrator drives the steady polling cadence via "get_usage" (configurable in config.yaml).
     setTimeout(reportUsage, 8000);
-    setInterval(reportUsage, 90000);
     for await (const message of session) {
       detectRateLimit(message);
       if (message.type === "assistant" && message.message && Array.isArray(message.message.content)) {

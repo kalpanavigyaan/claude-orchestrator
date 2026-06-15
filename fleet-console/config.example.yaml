@@ -1,0 +1,21 @@
+# Fleet Console configuration.
+#
+# Copy this file to config.yaml and edit. Precedence (highest first):
+#   environment variable  >  config.yaml  >  config.example.yaml  >  built-in defaults
+# Environment overrides still work: HOST, PORT, FLEET_TOKEN, SESSIONS_DIR,
+# USAGE_POLL_SECONDS, CONTINUE_BUFFER_SECONDS, CONTINUE_MIN_INTERVAL_SECONDS.
+
+server:
+  host: "127.0.0.1"        # bind interface; use 0.0.0.0 for laptop/iPad access on the LAN
+  port: 4318
+  token: ""               # bearer token required on every API/SSE call; empty = no auth
+
+sessions:
+  dir: "E:/Sessions/Claude"   # where per-session folders (json + markdown + instructions) live
+
+usage:
+  pollSeconds: 5          # how often the dashboard refreshes account usage + reset info
+
+continue:
+  bufferSeconds: 30       # wait this long after the reset before auto-continuing
+  minIntervalSeconds: 300 # minimum gap between auto-continues for a session
