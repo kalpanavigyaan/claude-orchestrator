@@ -727,20 +727,38 @@ function selectSession(id) {
   }
 }
 
+// Serialize syncs: the 1.5s poll and the SSE event both call syncSession, and renderedCount is
+// read before the await and written after — two overlapping calls would append the same new
+// messages (the "duplicate response" bug). Run one at a time; coalesce any call made mid-flight.
+let syncing = false;
+let syncQueued = false;
 async function syncSession(id) {
   if (id !== selectedId) return;
-  const d = await getJson(`/api/sessions/${id}`);
-  if (!d || !Array.isArray(d.messages)) return;
-  if (d.messages.length < renderedCount) {
-    messagesEl.innerHTML = "";
-    renderedCount = 0;
+  if (syncing) {
+    syncQueued = true;
+    return;
   }
-  for (let i = renderedCount; i < d.messages.length; i++) appendMessage(d.messages[i]);
-  renderedCount = d.messages.length;
-  for (const a of d.pendingApprovals || []) {
-    if (!seenApprovalIds.has(a.id)) {
-      seenApprovalIds.add(a.id);
-      enqueueApproval(a);
+  syncing = true;
+  try {
+    const d = await getJson(`/api/sessions/${id}`);
+    if (id !== selectedId || !d || !Array.isArray(d.messages)) return;
+    if (d.messages.length < renderedCount) {
+      messagesEl.innerHTML = "";
+      renderedCount = 0;
+    }
+    for (let i = renderedCount; i < d.messages.length; i++) appendMessage(d.messages[i]);
+    renderedCount = d.messages.length;
+    for (const a of d.pendingApprovals || []) {
+      if (!seenApprovalIds.has(a.id)) {
+        seenApprovalIds.add(a.id);
+        enqueueApproval(a);
+      }
+    }
+  } finally {
+    syncing = false;
+    if (syncQueued && selectedId) {
+      syncQueued = false;
+      syncSession(selectedId);
     }
   }
 }
