@@ -137,13 +137,13 @@ details[open] > .tree-summary::before { transform: rotate(90deg); }
 .session-item .timer { color: var(--amber); font-variant-numeric: tabular-nums; font-size: 12px; }
 
 /* Repositories panel */
-.repo-group { font-size: 11px; color: var(--muted); margin: 8px 2px 4px; word-break: break-all; }
 .repo-item { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 8px; cursor: pointer; }
 .repo-item:hover { background: var(--panel-2); }
 .repo-item .repo-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.repo-item .repo-branch { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80px; }
-.repo-item .repo-badge { margin-left: auto; flex: 0 0 auto; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: #0b1020; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
-.repo-item .repo-clean { margin-left: auto; flex: 0 0 auto; color: var(--green); font-size: 12px; }
+/* Branch + change badge — shared by the flat fallback (.repo-item) and the arborist tree (.arb-row). */
+.repo-branch { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 80px; }
+.repo-badge { margin-left: auto; flex: 0 0 auto; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: #0b1020; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.repo-clean { margin-left: auto; flex: 0 0 auto; color: var(--green); font-size: 12px; }
 
 .chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 

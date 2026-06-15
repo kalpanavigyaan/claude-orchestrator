@@ -1048,51 +1048,126 @@ async function openNewSessionForRepo(g, r) {
   el("f-cwd").value = r.path; // set after loadDistros (loadRepos would otherwise overwrite it)
 }
 
-/** Render the Repositories panel: local + running WSL repos, each with a git change-count badge. */
+/** Convert /api/repos groups into react-arborist node data (host group → repo leaves). */
+function reposToArborist(groups) {
+  return groups.map((g) => {
+    const gid = g.host === "wsl" ? "wsl:" + g.distro : "local";
+    return {
+      id: gid,
+      name: (g.host === "wsl" ? "🐧 " : "🖥 ") + g.label,
+      children: (g.repos || []).map((r) => ({ id: gid + ":" + r.path, name: r.name, repo: r, group: g })),
+    };
+  });
+}
+
+/** react-arborist row for the repos tree: host groups + repo leaves (branch + change badge). */
+function repoNode(a, info) {
+  const { node, style, dragHandle } = info;
+  const d = node.data;
+  if (node.isInternal) {
+    return a.html`<div ref=${dragHandle} style=${style} class="arb-row" onClick=${() => node.toggle()}>
+      <span class="arb-arrow">${node.isOpen ? "▾" : "▸"}</span>
+      <span class="arb-name">${d.name}</span>
+    </div>`;
+  }
+  const r = d.repo;
+  const badge =
+    typeof r.changes === "number" && r.changes > 0
+      ? a.html`<span class="repo-badge" title=${r.changes + " uncommitted change(s)"}>${r.changes}</span>`
+      : r.changes === 0
+        ? a.html`<span class="repo-clean" title="clean">✓</span>`
+        : null;
+  return a.html`<div ref=${dragHandle} style=${style} class="arb-row" title=${r.path} onClick=${() => openNewSessionForRepo(d.group, r)}>
+    <span class="arb-arrow"></span>
+    <span class="arb-icon">📦</span>
+    <span class="arb-name">${r.name}</span>
+    ${r.branch ? a.html`<span class="repo-branch">⎇ ${r.branch}</span>` : null}
+    ${badge}
+  </div>`;
+}
+
+let reposArborRoot = null;
+
+function renderReposTree(a, listEl, groups) {
+  try {
+    if (!reposArborRoot) reposArborRoot = a.createRoot(listEl);
+    const treeData = reposToArborist(groups);
+    const total = treeData.reduce((n, g) => n + 1 + (g.children ? g.children.length : 0), 0);
+    const width = Math.max(160, (listEl.clientWidth || 270) - 2);
+    const height = Math.min(total * 26 + 6, 460);
+    reposArborRoot.render(a.html`<${a.Tree}
+      data=${treeData} openByDefault=${true} width=${width} height=${height}
+      indent=${12} rowHeight=${26} disableDrag=${true} disableDrop=${true} disableMultiSelection=${true}
+    >${(p) => repoNode(a, p)}</>`);
+    setTimeout(() => {
+      if (reposArborRoot && total && !listEl.querySelector(".arb-row")) {
+        try { reposArborRoot.unmount(); } catch { /* ignore */ }
+        reposArborRoot = null;
+        renderReposFallback(listEl, groups);
+      }
+    }, 600);
+    return true;
+  } catch {
+    try { if (reposArborRoot) reposArborRoot.unmount(); } catch { /* ignore */ }
+    reposArborRoot = null;
+    return false;
+  }
+}
+
+function repoBadgeHtml(r) {
+  if (typeof r.changes === "number" && r.changes > 0) {
+    return `<span class="repo-badge" title="${r.changes} uncommitted change(s)">${r.changes}</span>`;
+  }
+  return r.changes === 0 ? '<span class="repo-clean" title="clean">✓</span>' : "";
+}
+
+/** Plain collapsible fallback tree (used if the CDN React/arborist can't load). */
+function renderReposFallback(listEl, groups) {
+  listEl.innerHTML = "";
+  for (const g of groups) {
+    const det = document.createElement("details");
+    det.className = "tree-group";
+    det.open = true;
+    const sum = document.createElement("summary");
+    sum.className = "tree-summary";
+    sum.textContent = (g.host === "wsl" ? "🐧 " : "🖥 ") + g.label;
+    det.appendChild(sum);
+    for (const r of g.repos || []) {
+      const item = document.createElement("div");
+      item.className = "repo-item";
+      item.style.paddingLeft = "18px";
+      item.title = r.path + (r.branch ? " · " + r.branch : "");
+      item.innerHTML =
+        `<span class="arb-icon">📦</span><span class="repo-name">${escapeHtml(r.name)}</span>` +
+        (r.branch ? `<span class="repo-branch">⎇ ${escapeHtml(r.branch)}</span>` : "") +
+        repoBadgeHtml(r);
+      item.addEventListener("click", () => openNewSessionForRepo(g, r));
+      det.appendChild(item);
+    }
+    listEl.appendChild(det);
+  }
+}
+
+/** Render the Repositories panel as a tree: host (local / running WSL distro) → repos with badges. */
 async function renderRepos() {
   const listEl = el("repos-list");
   if (!listEl) return;
   const data = await getJson("/api/repos");
   const groups = (data && data.groups) || [];
   if (!groups.length) {
+    if (reposArborRoot) {
+      try { reposArborRoot.unmount(); } catch { /* ignore */ }
+      reposArborRoot = null;
+    }
     listEl.innerHTML =
       data && data.computing
         ? '<div class="muted-note" style="padding:4px 2px">scanning…</div>'
         : '<div class="muted-note" style="padding:4px 2px">none found</div>';
     return;
   }
-  listEl.innerHTML = "";
-  for (const g of groups) {
-    const head = document.createElement("div");
-    head.className = "repo-group";
-    head.textContent = (g.host === "wsl" ? "🐧 " : "🖥 ") + g.label;
-    listEl.appendChild(head);
-    if (!g.repos.length) {
-      const empty = document.createElement("div");
-      empty.className = "muted-note";
-      empty.style.padding = "2px 8px";
-      empty.textContent = "no repos";
-      listEl.appendChild(empty);
-      continue;
-    }
-    for (const r of g.repos) {
-      const item = document.createElement("div");
-      item.className = "repo-item";
-      item.title = r.path + (r.branch ? " · " + r.branch : "");
-      let badge = "";
-      if (typeof r.changes === "number" && r.changes > 0) {
-        badge = `<span class="repo-badge" title="${r.changes} uncommitted change(s)">${r.changes}</span>`;
-      } else if (r.changes === 0) {
-        badge = '<span class="repo-clean" title="clean">✓</span>';
-      }
-      item.innerHTML =
-        `<span class="repo-name">${escapeHtml(r.name)}</span>` +
-        (r.branch ? `<span class="repo-branch">⎇ ${escapeHtml(r.branch)}</span>` : "") +
-        badge;
-      item.addEventListener("click", () => openNewSessionForRepo(g, r));
-      listEl.appendChild(item);
-    }
-  }
+  const a = await loadArborist();
+  if (a && renderReposTree(a, listEl, groups)) return;
+  renderReposFallback(listEl, groups);
 }
 el("f-create").addEventListener("click", async () => {
   const spec = {
