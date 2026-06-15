@@ -30,6 +30,7 @@ const workingTextEl = el("working-text");
 const workingCmdEl = el("working-cmd");
 const statusbarEl = el("statusbar");
 const sbTextEl = el("sb-text");
+const sbUsageEl = el("sb-usage");
 
 function api(path, body) {
   return fetch(path, {
@@ -490,13 +491,25 @@ function renderStatusBar() {
   if (!connected || !latest) {
     statusbarEl.className = "statusbar offline";
     sbTextEl.textContent = latest ? "Reconnecting to the orchestrator…" : "Connecting to the orchestrator…";
+    if (sbUsageEl) sbUsageEl.textContent = "";
     sbBusyKey = null;
     return;
+  }
+  // Account usage on the right — always visible while connected (fetched at startup, refreshed each poll).
+  if (sbUsageEl) {
+    const w = (latest.usage && latest.usage.windows) || [];
+    const fh = w.find((x) => x.type === "five_hour");
+    const sd = w.find((x) => x.type === "seven_day");
+    const parts = [];
+    if (fh && typeof fh.utilization === "number") parts.push(`5h ${fh.utilization}%`);
+    if (sd && typeof sd.utilization === "number") parts.push(`wk ${sd.utilization}%`);
+    const plan = latest.usage && latest.usage.subscriptionType ? latest.usage.subscriptionType : "";
+    sbUsageEl.textContent = parts.length ? (plan ? plan + " · " : "") + parts.join(" · ") : "account usage…";
   }
   // Viewing a saved session (read-only).
   if (viewingRel && !selectedId) {
     statusbarEl.className = "statusbar";
-    sbTextEl.textContent = "Viewing a past session (read-only) — create a session to chat";
+    sbTextEl.textContent = "Viewing a past session — click Resume ▸ to continue";
     sbBusyKey = null;
     return;
   }
@@ -552,7 +565,7 @@ function updateComposer() {
   input.placeholder = canSend
     ? "Message the agent… (Enter to send, Shift+Enter for newline)"
     : viewingRel
-      ? "Read-only past session — create a new session to chat"
+      ? "Past session — click Resume ▸ to continue chatting"
       : "Create or select a session to chat";
 }
 
@@ -1161,7 +1174,24 @@ async function viewPastSession(rel) {
   const cost = m.lastResult ? " · $" + (m.lastResult.cost || 0).toFixed(4) : "";
   chatHeaderEl.innerHTML =
     `<span><strong>${escapeHtml(m.label || "")}</strong> — <span class="badge ${escapeHtml(m.status || "")}">${escapeHtml(m.status || "saved")}</span>` +
-    `${cost} · <span class="muted-note">past session (read-only)</span></span>`;
+    `${cost} · <span class="muted-note">past session</span></span>` +
+    `<span class="actions"><button id="hdr-resume" class="primary">Resume ▸</button></span>`;
+  const resumeBtn = el("hdr-resume");
+  if (resumeBtn) {
+    resumeBtn.addEventListener("click", async () => {
+      resumeBtn.disabled = true;
+      resumeBtn.textContent = "Resuming…";
+      const r = await api("/api/history/resume", { rel });
+      if (r && r.ok && r.id) {
+        await pollFleet();
+        selectSession(r.id);
+      } else {
+        resumeBtn.disabled = false;
+        resumeBtn.textContent = "Resume ▸";
+        alert("Could not resume this session.");
+      }
+    });
+  }
   messagesEl.innerHTML = "";
   for (const e of m.interactions || []) {
     appendMessage(e.tool ? { role: "tool", name: e.tool, input: e.input } : { role: e.role, text: e.text });

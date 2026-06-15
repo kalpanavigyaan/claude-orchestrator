@@ -209,6 +209,7 @@ details[open] > .tree-summary::before { transform: rotate(90deg); }
 }
 .statusbar .sb-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); flex: 0 0 auto; }
 .statusbar #sb-text { overflow: hidden; text-overflow: ellipsis; }
+.statusbar .sb-usage { margin-left: auto; flex: 0 0 auto; padding-left: 12px; color: var(--muted); }
 .statusbar.offline { color: var(--red); }
 .statusbar.offline .sb-dot { background: var(--red); }
 .statusbar.busy { color: var(--text); }

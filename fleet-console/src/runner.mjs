@@ -211,6 +211,13 @@ async function main() {
   if (config.policy === "ask") {
     options.canUseTool = canUseTool;
   }
+  // Resume a saved conversation: by session id when known, else continue the most recent
+  // conversation in this cwd (mutually exclusive).
+  if (config.resume) {
+    options.resume = String(config.resume);
+  } else if (config.continueRecent) {
+    options.continue = true;
+  }
 
   emit({ type: "status", status: "ready" });
   if (config.initialPrompt) {
@@ -233,8 +240,13 @@ async function main() {
     })();
     emit({ type: "mode", mode: config.permissionMode || "default" });
     emit({ type: "model", model: config.model || null });
+    let lastSessionId = null;
     for await (const message of session) {
       detectRateLimit(message);
+      if (message.session_id && message.session_id !== lastSessionId) {
+        lastSessionId = message.session_id;
+        emit({ type: "session_id", id: message.session_id }); // so the orchestrator can save it for resume
+      }
       if (message.type === "assistant" && message.message && Array.isArray(message.message.content)) {
         for (const block of message.message.content) {
           if (block.type === "text" && block.text) {

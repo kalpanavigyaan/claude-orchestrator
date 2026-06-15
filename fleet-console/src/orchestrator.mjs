@@ -261,6 +261,7 @@ function sessionRecordObject(s) {
     model: s.model || null,
     policy: s.policy,
     permissionMode: s.permissionMode,
+    sdkSessionId: s.sdkSessionId || null,
     status: s.status,
     createdAt: new Date(s.createdAt).toISOString(),
     lastResult: s.lastResult || null,
@@ -656,8 +657,10 @@ function createSession(spec) {
   const group = safeSegment(host === "wsl" ? spec.distro || "distro" : os.hostname());
   const repo = safeSegment(repoNameOf(spec.cwd));
   const title = safeSegment(label);
-  let sessionDir = path.join(SESSIONS_DIR, hostKind, group, repo, title);
-  if (fs.existsSync(sessionDir)) {
+  // Resuming reuses the saved session's folder so the conversation continues in place; a new
+  // session gets a fresh folder (uniquified if the title collides).
+  let sessionDir = spec.sessionDirOverride || path.join(SESSIONS_DIR, hostKind, group, repo, title);
+  if (!spec.sessionDirOverride && fs.existsSync(sessionDir)) {
     sessionDir = `${sessionDir}_${id}`;
   }
   const instructionsDir = path.join(sessionDir, "instructions");
@@ -692,6 +695,10 @@ function createSession(spec) {
     systemPromptAppend: autonomyNote + instructionsNote,
     limitPattern: spec.limitPattern || "",
     maxTurns: spec.maxTurns || undefined,
+    // Resume a saved conversation: by SDK session id when known, else continue the most recent
+    // conversation in this cwd (covers sessions created before ids were captured).
+    resume: spec.resume || undefined,
+    continueRecent: !!spec.continueRecent,
   };
 
   const session = {
@@ -715,7 +722,8 @@ function createSession(spec) {
     sessionDir,
     instructionsDir,
     agentInstructionsDir,
-    messages: [],
+    sdkSessionId: spec.sdkSessionId || null,
+    messages: Array.isArray(spec.preload) ? spec.preload : [],
     pendingApprovals: new Map(),
     sse: new Set(),
     stdoutRemainder: "",
@@ -733,6 +741,63 @@ function createSession(spec) {
     });
   }
   spawnRunner(session);
+  return session;
+}
+
+/**
+ * Bring a saved (past) session back to life so the user can keep chatting. Reuses the session's
+ * folder + transcript and asks the SDK to resume its conversation (by stored session id, or by
+ * continuing the most recent conversation in that cwd for older sessions). Returns the live session,
+ * or null if the saved record can't be read.
+ */
+function resumeSession(rel) {
+  const dir = path.resolve(path.join(SESSIONS_DIR, String(rel || "")));
+  if (!dir.startsWith(path.resolve(SESSIONS_DIR))) {
+    return null;
+  }
+  let meta;
+  try {
+    meta = JSON.parse(fs.readFileSync(path.join(dir, "session.json"), "utf8"));
+  } catch {
+    return null;
+  }
+  // If this folder is already open: return it when live, or drop the dead leftover and re-resume.
+  for (const s of sessions.values()) {
+    if (s.sessionDir && path.resolve(s.sessionDir) === dir) {
+      if (runnerAlive(s)) {
+        return s;
+      }
+      sessions.delete(s.id);
+      break;
+    }
+  }
+  const preload = (meta.interactions || []).map((e) => ({
+    ts: Date.parse(e.ts) || now(),
+    role: e.role || "system",
+    ...(e.text != null ? { text: e.text } : {}),
+    ...(e.tool != null ? { name: e.tool } : {}),
+    ...(e.input != null ? { input: e.input } : {}),
+  }));
+  const session = createSession({
+    label: meta.label || "resumed",
+    host: meta.host === "wsl" ? "wsl" : "local",
+    distro: meta.distro || undefined,
+    cwd: meta.cwd,
+    model: meta.model || "",
+    permissionMode: meta.permissionMode || undefined,
+    policy: meta.policy || "auto",
+    sessionDirOverride: dir,
+    preload,
+    sdkSessionId: meta.sdkSessionId || null,
+    resume: meta.sdkSessionId || undefined,
+    continueRecent: !meta.sdkSessionId,
+  });
+  recordMessage(session, {
+    role: "system",
+    text: meta.sdkSessionId
+      ? "Resumed — continuing this conversation with full context."
+      : "Resuming the most recent conversation in this folder (no saved session id).",
+  });
   return session;
 }
 
@@ -852,6 +917,12 @@ function handleRunnerEvent(s, event) {
       break;
     case "model":
       s.model = event.model || null;
+      break;
+    case "session_id":
+      if (event.id && event.id !== s.sdkSessionId) {
+        s.sdkSessionId = event.id; // captured so this session can be resumed later
+        s.dirty = true;
+      }
       break;
     case "approval_request":
       s.pendingApprovals.set(event.id, { id: event.id, tool: event.tool, input: event.input, ts: now() });
@@ -1007,6 +1078,17 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     sendJson(res, 200, item);
+    return;
+  }
+  if (pathname === "/api/history/resume" && method === "POST") {
+    const body = await readBody(req);
+    const s = resumeSession(body.rel);
+    if (!s) {
+      sendJson(res, 400, { ok: false, reason: "could not resume" });
+      return;
+    }
+    broadcastFleet();
+    sendJson(res, 200, { ok: true, id: s.id });
     return;
   }
 
@@ -1319,4 +1401,5 @@ server.listen(PORT, HOST, () => {
   const auth = TOKEN ? " (token required)" : " (no token — set FLEET_TOKEN to lock down)";
   console.log(`[fleet-console] http://${HOST}:${PORT}${auth}`);
   console.log(`[fleet-console] config: ${configSource} · sessions: ${SESSIONS_DIR} · usage poll: ${USAGE_POLL_MS / 1000}s`);
+  usageTick(); // fetch account usage right away so it's available at startup
 });
