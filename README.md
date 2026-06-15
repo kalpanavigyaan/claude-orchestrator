@@ -10,6 +10,18 @@ It is built for the **Claude Max plan**: the Agent SDK drives the local `claude`
 command-line tool, which authenticates with your existing Claude Code subscription login —
 no `ANTHROPIC_API_KEY` and no separate API billing.
 
+## What's in this repo
+
+This repo grew into three related tools, all on the Max-plan subscription (no API key):
+
+| Tool | What it is | Docs |
+|------|-----------|------|
+| **claude-orchestrator** (this CLI — `src/`, `scripts/`) | A Windows CLI that runs **autonomous, unattended** agents from markdown task files against scoped repos within a time window. | below |
+| **fleet-console** (`fleet-console/`) | A zero-build **web app** that owns multiple Claude Agent SDK sessions and lets you **interactively drive** them from a browser (laptop/iPad): markdown chat, mode/model switching, account usage, resume, repositories, and auto-continue after the 5-hour reset. **The actively developed tool.** | [fleet-console/README.md](fleet-console/README.md) |
+| **agent-fleet** (`agent-fleet/`) | Monitors and auto-continues many Claude agents (one per VS Code window) across host/WSL/guests, with a dashboard. | [agent-fleet/README.md](agent-fleet/README.md) |
+
+The rest of this document covers the **claude-orchestrator CLI**.
+
 ## What it does
 
 - Reads instruction markdown files; each names a target repository and the work to do.
@@ -102,11 +114,13 @@ not merely requested in the prompt.
 ## Project layout
 
 ```
-config/                      Example YAML configuration
-instructions/                Where you drop task markdown files
-scripts/                     uv bootstrap and the CLI entry point
-src/orchestrator/            The application package (one module per responsibility)
+config/                      Example YAML configuration (CLI)
+instructions/                Where you drop task markdown files (CLI)
+scripts/                     uv bootstrap, the CLI entry point, and fleet-console launchers
+src/orchestrator/            The CLI application package (one module per responsibility)
 tests/                       Unit tests (scope and permissions are safety-critical)
+fleet-console/               The web app — see fleet-console/README.md
+agent-fleet/                 VS Code-window fleet monitor + dashboard — see agent-fleet/README.md
 ```
 
 ## Tests
