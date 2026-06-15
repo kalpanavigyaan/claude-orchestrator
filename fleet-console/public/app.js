@@ -60,6 +60,107 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 }
 
+// ---- minimal, dependency-free markdown renderer (Claude's output is markdown) --------------
+// Everything is HTML-escaped first; only a known-safe set of tags is introduced, and link hrefs
+// are restricted, so agent output can't inject markup.
+
+/** Inline formatting: bold, italic, strikethrough, inline code, links. Input must be escaped. */
+function mdInline(s) {
+  const codes = [];
+  // Protect code spans (token avoids colliding with real digits) so emphasis/links skip them.
+  s = s.replace(/`([^`]+)`/g, (_, c) => `@@CODE${codes.push(c) - 1}@@`);
+  s = s
+    .replace(/\*\*([^*]+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, "$1<em>$2</em>")
+    .replace(/~~([^~]+?)~~/g, "<del>$1</del>")
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, t, href) => {
+      const safe = /^(https?:|mailto:|\/)/i.test(href) ? href : "#";
+      return `<a href="${safe}" target="_blank" rel="noopener noreferrer">${t}</a>`;
+    });
+  return s.replace(/@@CODE(\d+)@@/g, (_, i) => `<code>${codes[+i]}</code>`);
+}
+
+const isTableSep = (l) => /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?\s*$/.test(l);
+
+/** Block-level markdown → HTML: headings, lists, tables, code fences, blockquotes, paragraphs. */
+function mdToHtml(src) {
+  const lines = String(src == null ? "" : src).replace(/\r\n?/g, "\n").split("\n");
+  const out = [];
+  let i = 0;
+  const splitRow = (l) =>
+    l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => mdInline(escapeHtml(c.trim())));
+
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^\s*$/.test(line)) { i++; continue; }
+
+    const fence = line.match(/^\s*```/);
+    if (fence) {
+      const buf = [];
+      i++;
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) buf.push(lines[i++]);
+      i++;
+      out.push(`<pre><code>${escapeHtml(buf.join("\n"))}</code></pre>`);
+      continue;
+    }
+
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    if (h) {
+      const tag = "h" + Math.min(h[1].length, 6);
+      out.push(`<${tag}>${mdInline(escapeHtml(h[2].trim()))}</${tag}>`);
+      i++;
+      continue;
+    }
+
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { out.push("<hr />"); i++; continue; }
+
+    if (line.includes("|") && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+      const headers = splitRow(line);
+      i += 2;
+      let t = "<table><thead><tr>" + headers.map((c) => `<th>${c}</th>`).join("") + "</tr></thead><tbody>";
+      while (i < lines.length && lines[i].includes("|") && !/^\s*$/.test(lines[i])) {
+        t += "<tr>" + splitRow(lines[i]).map((c) => `<td>${c}</td>`).join("") + "</tr>";
+        i++;
+      }
+      out.push(t + "</tbody></table>");
+      continue;
+    }
+
+    if (/^\s*>\s?/.test(line)) {
+      const buf = [];
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) buf.push(lines[i++].replace(/^\s*>\s?/, ""));
+      out.push(`<blockquote>${mdInline(escapeHtml(buf.join(" ")))}</blockquote>`);
+      continue;
+    }
+
+    const ordered = /^\s*\d+\.\s+/.test(line);
+    const listRe = ordered ? /^\s*\d+\.\s+(.*)$/ : /^\s*[-*+]\s+(.*)$/;
+    if (listRe.test(line)) {
+      const items = [];
+      while (i < lines.length && listRe.test(lines[i])) items.push(lines[i++].replace(listRe, "$1"));
+      const tag = ordered ? "ol" : "ul";
+      out.push(`<${tag}>` + items.map((it) => `<li>${mdInline(escapeHtml(it))}</li>`).join("") + `</${tag}>`);
+      continue;
+    }
+
+    const para = [];
+    while (
+      i < lines.length &&
+      !/^\s*$/.test(lines[i]) &&
+      !/^\s*```/.test(lines[i]) &&
+      !/^#{1,6}\s+/.test(lines[i]) &&
+      !/^\s*>\s?/.test(lines[i]) &&
+      !/^\s*[-*+]\s+/.test(lines[i]) &&
+      !/^\s*\d+\.\s+/.test(lines[i]) &&
+      !(lines[i].includes("|") && i + 1 < lines.length && isTableSep(lines[i + 1]))
+    ) {
+      para.push(lines[i++]);
+    }
+    out.push(`<p>${mdInline(escapeHtml(para.join("\n"))).replace(/\n/g, "<br />")}</p>`);
+  }
+  return out.join("");
+}
+
 function setConnected(on) {
   connEl.textContent = on ? "live" : "offline";
   connEl.className = "conn " + (on ? "online" : "offline");
@@ -371,7 +472,14 @@ function appendMessage(m) {
   }
   const div = document.createElement("div");
   div.className = "msg " + role;
-  div.textContent = m.text || "";
+  // Claude's responses are markdown (tables, bold, lists, code) — render them; keep user/system
+  // text literal.
+  if (role === "assistant" || role === "result") {
+    div.classList.add("md");
+    div.innerHTML = mdToHtml(m.text || "");
+  } else {
+    div.textContent = m.text || "";
+  }
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
@@ -629,10 +737,13 @@ async function loadHistoryItem(rel) {
   html += '<div class="hd-msgs">';
   for (const e of m.interactions || []) {
     const role = e.role || "system";
-    const text = e.tool
-      ? `🔧 ${e.tool} ${e.input ? JSON.stringify(e.input).slice(0, 200) : ""}`
-      : e.text || "";
-    html += `<div class="msg ${escapeHtml(role)}">${escapeHtml(text)}</div>`;
+    if (e.tool) {
+      html += `<div class="msg tool">🔧 ${escapeHtml(e.tool)} ${escapeHtml(e.input ? JSON.stringify(e.input).slice(0, 200) : "")}</div>`;
+    } else if (role === "assistant" || role === "result") {
+      html += `<div class="msg ${escapeHtml(role)} md">${mdToHtml(e.text || "")}</div>`;
+    } else {
+      html += `<div class="msg ${escapeHtml(role)}">${escapeHtml(e.text || "")}</div>`;
+    }
   }
   html += "</div>";
   detail.innerHTML = html;
