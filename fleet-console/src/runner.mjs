@@ -50,8 +50,22 @@ let approvalCounter = 0;
 // The live permission mode (changeable mid-session). canUseTool honors it so switching to
 // "Full auto" (bypassPermissions) or "Auto-accept edits" actually stops the prompts — without
 // this, a canUseTool callback overrides permissionMode and prompts for every tool.
-let currentMode = config.permissionMode || "default";
+let currentMode = config.permissionMode || "default"; // for the SDK (plan vs default)
+
+// Per-category auto-approve toggles the user controls (checkboxes). A tool whose category is in
+// this set runs without asking; otherwise canUseTool prompts the UI. Read-only tools always run.
+let autoApprove = new Set(Array.isArray(config.autoApprove) ? config.autoApprove : []);
 const EDIT_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit", "Update", "Create", "ApplyPatch"]);
+const READ_TOOLS = new Set(["Read", "Grep", "Glob", "LS", "NotebookRead", "TodoWrite"]);
+const SHELL_TOOLS = new Set(["Bash", "BashOutput", "KillShell", "KillBash"]);
+
+/** Category for a tool: read (always allowed), edits, shell (bash/git/…), or other. */
+function toolCategory(name) {
+  if (READ_TOOLS.has(name)) return "read";
+  if (EDIT_TOOLS.has(name)) return "edits";
+  if (SHELL_TOOLS.has(name)) return "shell";
+  return "other";
+}
 
 function emit(event) {
   process.stdout.write(JSON.stringify(event) + "\n");
@@ -120,12 +134,10 @@ function detectRateLimit(message) {
 
 /** Permission callback for "ask" policy: auto-allow per the live mode, else prompt the UI. */
 async function canUseTool(toolName, input) {
-  // "Full auto" → allow everything (incl. Bash/git). "Auto-accept edits" → allow file edits only.
-  // Echo `updatedInput` (the SDK uses it as the input to actually run the tool).
-  if (currentMode === "bypassPermissions") {
-    return { behavior: "allow", updatedInput: input };
-  }
-  if (currentMode === "acceptEdits" && EDIT_TOOLS.has(toolName)) {
+  // Auto-approve read-only tools and any category the user has toggled on; otherwise prompt.
+  // `updatedInput` must be echoed — the SDK uses it as the input to actually run the tool.
+  const cat = toolCategory(toolName);
+  if (cat === "read" || autoApprove.has(cat)) {
     return { behavior: "allow", updatedInput: input };
   }
   const id = `appr_${++approvalCounter}`;
@@ -172,9 +184,14 @@ rl.on("line", (line) => {
       }
       break;
     }
+    case "set_auto_approve":
+      // Replace the set of auto-approved categories; future tools in these categories run silently.
+      autoApprove = new Set(Array.isArray(cmd.categories) ? cmd.categories : []);
+      emit({ type: "auto_approve", categories: [...autoApprove] });
+      break;
     case "set_mode": {
       const mode = String(cmd.mode || "default");
-      currentMode = mode; // canUseTool reads this immediately, so FUTURE tools auto-allow
+      currentMode = mode; // SDK plan vs default
       emit({ type: "mode", mode });
       if (sdkSession && typeof sdkSession.setPermissionMode === "function") {
         sdkSession
@@ -233,10 +250,10 @@ async function main() {
       append: config.systemPromptAppend || "",
     },
   };
-  // "ask" policy → interactive approvals; "auto" → rely on permissionMode (walk-away).
-  if (config.policy === "ask") {
-    options.canUseTool = canUseTool;
-  }
+  // canUseTool is our single permission authority for every session — it auto-approves the
+  // categories the user toggled (and read-only tools) and prompts for the rest. This is what makes
+  // "auto-approve shell" actually let Bash/git run (the SDK's permissionMode only covers edits).
+  options.canUseTool = canUseTool;
   // Resume a saved conversation: by session id when known, else continue the most recent
   // conversation in this cwd (mutually exclusive).
   if (config.resume) {
@@ -269,6 +286,7 @@ async function main() {
     })();
     emit({ type: "mode", mode: config.permissionMode || "default" });
     emit({ type: "model", model: config.model || null });
+    emit({ type: "auto_approve", categories: [...autoApprove] });
     let lastSessionId = null;
     for await (const message of session) {
       detectRateLimit(message);

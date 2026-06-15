@@ -592,10 +592,13 @@ function updateComposer() {
 }
 
 const MODE_OPTIONS = [
-  { value: "default", label: "Default" },
+  { value: "default", label: "Normal" },
   { value: "plan", label: "Plan (read-only)" },
-  { value: "acceptEdits", label: "Auto-accept edits" },
-  { value: "bypassPermissions", label: "Full auto" },
+];
+const AUTO_APPROVE_OPTIONS = [
+  { key: "edits", label: "File edits" },
+  { key: "shell", label: "Shell commands (bash, git, …)" },
+  { key: "other", label: "Other tools (web, etc.)" },
 ];
 
 function renderChatHeader(s) {
@@ -612,9 +615,9 @@ let lastControlsSig = null;
 function renderControls(s) {
   if (!rbControlsEl) return;
   const models = (latest && latest.models) || [];
-  // Stable signature so the <select>s don't reset/close on every poll; covers all three states.
+  // Stable signature so the inputs don't reset on every poll; covers all three states.
   const sig = s
-    ? "live|" + [s.id, s.status, s.permissionMode, s.model, models.length].join("|")
+    ? "live|" + [s.id, s.status, s.permissionMode, s.model, models.length, (s.autoApprove || []).join(",")].join("|")
     : viewingRel
       ? "past|" + viewingRel
       : "none";
@@ -649,9 +652,16 @@ function renderControls(s) {
   for (const m of models) {
     modelOpts += `<option value="${escapeHtml(m.value)}" ${m.value === s.model ? "selected" : ""}>${escapeHtml(m.displayName || m.value)}</option>`;
   }
+  const approved = new Set(s.autoApprove || []);
+  const approveBoxes = AUTO_APPROVE_OPTIONS.map(
+    (o) => `<label class="rb-check"><input type="checkbox" class="ctl-auto" value="${o.key}" ${approved.has(o.key) ? "checked" : ""}/> ${escapeHtml(o.label)}</label>`
+  ).join("");
   rbControlsEl.innerHTML =
     `<div class="rb-section">
-       <label class="rb-label">⚙ Permission mode</label>
+       <label class="rb-label">✅ Auto-approve without asking</label>
+       ${approveBoxes}
+       <div class="rb-note">Unchecked tools pop an approval prompt. Read-only tools always run.</div>
+       <label class="rb-label">⚙ Mode</label>
        <select id="ctl-mode" class="hdr-select">${modeOpts}</select>
        <label class="rb-label">🧠 Model</label>
        <select id="ctl-model" class="hdr-select">${modelOpts}</select>
@@ -663,6 +673,13 @@ function renderControls(s) {
        <button id="ctl-restart">🔄 Restart runner</button>
        <button id="ctl-end" class="rb-end">⏏ End session</button>
      </div>`;
+  for (const box of rbControlsEl.querySelectorAll(".ctl-auto")) {
+    box.addEventListener("change", async () => {
+      const categories = [...rbControlsEl.querySelectorAll(".ctl-auto")].filter((b) => b.checked).map((b) => b.value);
+      await api(`/api/sessions/${s.id}/set-auto-approve`, { categories });
+      pollFleet();
+    });
+  }
   el("ctl-mode").addEventListener("change", async (e) => {
     await api(`/api/sessions/${s.id}/set-mode`, { mode: e.target.value });
     pollFleet();

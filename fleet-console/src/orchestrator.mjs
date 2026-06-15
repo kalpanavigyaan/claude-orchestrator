@@ -37,8 +37,16 @@ const MESSAGE_CAP = 500;
 const SESSIONS_DIR = config.sessions.dir;
 const REPO_LOCAL_ROOTS = (config.repos && Array.isArray(config.repos.localRoots)) ? config.repos.localRoots : [];
 const REPO_MAX_DEPTH = (config.repos && config.repos.maxDepth) || 3;
-/** Tools "Auto-accept edits" mode auto-approves (file edits). "Full auto" approves everything. */
+// Tool categories for the per-category auto-approve toggles (mirrors runner.mjs).
 const EDIT_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit", "Update", "Create", "ApplyPatch"]);
+const READ_TOOLS = new Set(["Read", "Grep", "Glob", "LS", "NotebookRead", "TodoWrite"]);
+const SHELL_TOOLS = new Set(["Bash", "BashOutput", "KillShell", "KillBash"]);
+function toolCategory(name) {
+  if (READ_TOOLS.has(name)) return "read";
+  if (EDIT_TOOLS.has(name)) return "edits";
+  if (SHELL_TOOLS.has(name)) return "shell";
+  return "other";
+}
 try {
   fs.mkdirSync(SESSIONS_DIR, { recursive: true });
 } catch {
@@ -146,6 +154,7 @@ function sessionSummary(s) {
     cwd: s.cwd,
     model: s.model || null,
     permissionMode: s.permissionMode || "default",
+    autoApprove: s.autoApprove || [],
     policy: s.policy,
     status: s.status,
     resetAt: s.resetAt,
@@ -726,8 +735,13 @@ let reposComputing = false;
 function createSession(spec) {
   const id = crypto.randomBytes(5).toString("hex");
   const policy = spec.policy === "ask" ? "ask" : "auto";
-  const permissionMode =
-    spec.permissionMode || (policy === "auto" ? "acceptEdits" : "default");
+  const permissionMode = spec.permissionMode || "default"; // plan vs default; execution is via autoApprove
+  // What runs without asking. "auto" (walk-away) approves everything; "ask" approves nothing (prompts).
+  const autoApprove = Array.isArray(spec.autoApprove)
+    ? spec.autoApprove
+    : policy === "auto"
+      ? ["edits", "shell", "other"]
+      : [];
   const host = spec.host === "wsl" ? "wsl" : "local";
   const label = spec.label || spec.cwd || id;
 
@@ -781,6 +795,7 @@ function createSession(spec) {
     initialPrompt: spec.initialPrompt || "",
     systemPromptAppend: autonomyNote + instructionsNote,
     maxTurns: spec.maxTurns || undefined,
+    autoApprove,
     // Resume a saved conversation: by SDK session id when known, else continue the most recent
     // conversation in this cwd (covers sessions created before ids were captured).
     resume: spec.resume || undefined,
@@ -797,6 +812,7 @@ function createSession(spec) {
     cwd: spec.cwd,
     model: spec.model || null,
     permissionMode,
+    autoApprove,
     policy,
     autoContinue: spec.autoContinue !== false,
     status: "starting",
@@ -1007,6 +1023,11 @@ function handleRunnerEvent(s, event) {
       break;
     case "model":
       s.model = event.model || null;
+      break;
+    case "auto_approve":
+      if (Array.isArray(event.categories)) {
+        s.autoApprove = event.categories;
+      }
       break;
     case "session_id":
       if (event.id && event.id !== s.sdkSessionId) {
@@ -1352,12 +1373,18 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { ok });
     } else if (verb === "set-mode") {
       const mode = String(body.mode || "default");
-      s.permissionMode = mode; // optimistic; runner echoes back a "mode" event on success
+      s.permissionMode = mode; // plan vs default; optimistic, runner echoes "mode" on success
       const ok = writeToRunner(s, { type: "set_mode", mode });
-      // Release any approval already waiting that this mode allows — via the normal approval channel,
-      // so the runner unblocks AND the modal clears. (canUseTool auto-allows future tools itself.)
+      sendJson(res, 200, { ok });
+    } else if (verb === "set-auto-approve") {
+      const categories = Array.isArray(body.categories) ? body.categories.map(String) : [];
+      s.autoApprove = categories;
+      const ok = writeToRunner(s, { type: "set_auto_approve", categories });
+      // Release any approval already waiting whose category is now auto-approved — via the normal
+      // approval channel, so the runner unblocks AND the modal clears.
+      const allow = new Set(categories);
       for (const [id, appr] of s.pendingApprovals) {
-        if (mode === "bypassPermissions" || (mode === "acceptEdits" && EDIT_TOOLS.has(appr.tool))) {
+        if (allow.has(toolCategory(appr.tool))) {
           s.pendingApprovals.delete(id);
           writeToRunner(s, { type: "approval", id, decision: "allow" });
         }

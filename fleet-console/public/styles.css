@@ -163,6 +163,8 @@ details[open] > .tree-summary::before { transform: rotate(90deg); }
 .rb-pane.hidden { display: none; }
 .rb-section { padding: 12px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--border); }
 .rb-label { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-top: 6px; }
+.rb-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; padding: 2px 0; }
+.rb-check input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
 .rb-section .hdr-select { max-width: none; width: 100%; }
 .rb-actions { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .rb-actions button { width: 100%; }
