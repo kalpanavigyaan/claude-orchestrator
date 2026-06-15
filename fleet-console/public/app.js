@@ -27,6 +27,7 @@ const connEl = el("conn");
 const usageBarEl = el("usage-bar");
 const workingEl = el("working");
 const workingTextEl = el("working-text");
+const workingCmdEl = el("working-cmd");
 
 function api(path, body) {
   return fetch(path, {
@@ -191,14 +192,18 @@ function updateWorking() {
   if (!s) { workingEl.classList.add("hidden"); return; }
   let text = "";
   let err = false;
+  let showCmd = false;
   switch (s.status) {
-    case "running": text = "Claude is working…"; break;
+    case "running": text = "Claude is working…"; showCmd = true; break;
     case "starting": text = "Starting the session…"; break;
     case "limited": text = "Usage limit reached — will auto-continue after the reset."; break;
     case "error": text = "Runner stopped. Press Restart to try again."; err = true; break;
     default: workingEl.classList.add("hidden"); return; // idle, ended
   }
   workingTextEl.textContent = text;
+  if (workingCmdEl) {
+    workingCmdEl.textContent = showCmd && lastTool ? "🔧 " + toolSummary(lastTool) : "";
+  }
   workingEl.classList.toggle("err", err);
   workingEl.classList.remove("hidden");
 }
@@ -307,6 +312,7 @@ function selectSession(id) {
   renderedCount = 0;
   approvalQueue = [];
   seenApprovalIds = new Set();
+  lastTool = null;
   renderFleet();
 
   // Poll-driven so the conversation loads/updates in ANY browser (including embedded ones
@@ -339,15 +345,33 @@ async function syncSession(id) {
   }
 }
 
-function appendMessage(m) {
-  const div = document.createElement("div");
-  const role = m.role || "system";
-  div.className = "msg " + role;
-  if (role === "tool") {
-    div.textContent = `🔧 ${m.name} ${m.input ? JSON.stringify(m.input).slice(0, 200) : ""}`;
-  } else {
-    div.textContent = m.text || "";
+let lastTool = null;
+
+/** Compact one-line summary of a tool call: "Bash · git status", "Edit · src/app.js", etc. */
+function toolSummary(m) {
+  const name = m.name || "tool";
+  const inp = m.input || {};
+  let detail =
+    inp.command || inp.file_path || inp.path || inp.pattern || inp.url || inp.description || "";
+  if (!detail && inp && typeof inp === "object") {
+    detail = Object.values(inp).find((v) => typeof v === "string") || "";
   }
+  detail = String(detail).replace(/\s+/g, " ").trim().slice(0, 90);
+  return detail ? `${name} · ${detail}` : name;
+}
+
+function appendMessage(m) {
+  const role = m.role || "system";
+  // Tool calls aren't shown as chat bubbles — they bury the actual responses. The latest one is
+  // surfaced compactly in the working line; the full record stays in History.
+  if (role === "tool") {
+    lastTool = m;
+    updateWorking();
+    return;
+  }
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.textContent = m.text || "";
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }

@@ -118,9 +118,12 @@ main { flex: 1; display: flex; min-height: 0; }
 .msg.system { align-self: center; background: transparent; color: var(--muted); font-size: 12px; }
 .msg.result { align-self: flex-start; background: rgba(110,168,254,.08); border: 1px solid var(--border); font-size: 13px; }
 
-.working { display: flex; align-items: center; gap: 8px; padding: 6px 14px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--border); }
+.working { display: flex; flex-direction: column; gap: 3px; padding: 6px 14px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--border); }
 .working.hidden { display: none; }
 .working.err { color: var(--red); }
+.working .working-status { display: flex; align-items: center; gap: 8px; }
+.working .working-cmd { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 11px; color: var(--muted); opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.working .working-cmd:empty { display: none; }
 .working .dots { display: inline-flex; gap: 4px; }
 .working .dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); display: inline-block; animation: blink 1.2s infinite both; }
 .working .dots i:nth-child(2) { animation-delay: .2s; }

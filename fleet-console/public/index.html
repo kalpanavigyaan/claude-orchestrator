@@ -40,7 +40,10 @@
     <section id="chat" class="chat">
       <div id="chat-header" class="chat-header">Select or create a session.</div>
       <div id="messages" class="messages"></div>
-      <div id="working" class="working hidden"><span class="dots"><i></i><i></i><i></i></span> <span id="working-text">Claude is working…</span></div>
+      <div id="working" class="working hidden">
+        <div class="working-status"><span class="dots"><i></i><i></i><i></i></span> <span id="working-text">Claude is working…</span></div>
+        <span id="working-cmd" class="working-cmd"></span>
+      </div>
       <form id="composer" class="composer" autocomplete="off">
         <textarea id="composer-input" rows="2" placeholder="Message the agent… (Enter to send, Shift+Enter for newline)"></textarea>
         <button type="submit" class="primary">Send</button>
