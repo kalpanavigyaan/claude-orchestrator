@@ -51,34 +51,6 @@ function emit(event) {
   process.stdout.write(JSON.stringify(event) + "\n");
 }
 
-// The SDK's structured /usage data (session cost + claude.ai plan rate-limit windows: 5-hour,
-// 7-day, per-model). This is a pull, always available — unlike rate_limit_event which only fires
-// on a status transition. The method name is intentionally scary because the API is experimental.
-const USAGE_METHOD = "usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET";
-let sdkSession = null;
-
-/** Pull the structured /usage data and forward it to the orchestrator. Best-effort. */
-async function reportUsage() {
-  const session = sdkSession;
-  if (!session || typeof session[USAGE_METHOD] !== "function") {
-    return;
-  }
-  try {
-    const u = await session[USAGE_METHOD]();
-    emit({
-      type: "usage_report",
-      report: {
-        subscriptionType: u.subscription_type ?? null,
-        available: !!u.rate_limits_available,
-        rateLimits: u.rate_limits || null,
-        sessionCost: u.session ? u.session.total_cost_usd : null,
-      },
-    });
-  } catch {
-    /* experimental endpoint; ignore failures */
-  }
-}
-
 function toEpochMs(value) {
   if (typeof value === "number" && isFinite(value)) {
     return value < 1e12 ? Math.round(value * 1000) : Math.round(value);
@@ -170,9 +142,6 @@ rl.on("line", (line) => {
     case "continue":
       prompt.push({ type: "user", message: { role: "user", content: "continue" } });
       break;
-    case "get_usage":
-      reportUsage();
-      break;
     case "approval": {
       const resolve = pendingApprovals.get(cmd.id);
       if (resolve) {
@@ -229,10 +198,6 @@ async function main() {
 
   try {
     const session = query({ prompt, options });
-    sdkSession = session;
-    // Report usage once shortly after startup (fast first paint) and after every turn. The
-    // orchestrator drives the steady polling cadence via "get_usage" (configurable in config.yaml).
-    setTimeout(reportUsage, 8000);
     for await (const message of session) {
       detectRateLimit(message);
       if (message.type === "assistant" && message.message && Array.isArray(message.message.content)) {
@@ -253,7 +218,6 @@ async function main() {
           resultText: message.result ?? null,
         });
         emit({ type: "status", status: "idle" });
-        reportUsage(); // refresh usage windows after each completed turn
       } else if (message.type === "system" || message.type === "status") {
         emit({ type: "log", level: "info", message: message.subtype || message.type });
       }

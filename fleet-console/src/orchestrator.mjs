@@ -24,6 +24,7 @@ import { config, configSource } from "./config.mjs";
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const RUNNER_PATH = path.join(__dirname, "runner.mjs");
+const USAGE_FETCHER_PATH = path.join(__dirname, "usage-fetcher.mjs");
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 
 const PORT = config.server.port;
@@ -158,25 +159,46 @@ function sessionSummary(s) {
   };
 }
 
-/** Aggregate cost + tokens across sessions this run. Cost prefers the SDK's cumulative per-session
- *  /usage figure (s.usageCost), falling back to the last result's per-turn cost. */
+/** Aggregate cost + tokens across sessions this run, from each session's last result (cumulative). */
 function aggregateUsage() {
   let costUsd = 0;
   let inputTokens = 0;
   let outputTokens = 0;
   for (const s of sessions.values()) {
-    if (typeof s.usageCost === "number") {
-      costUsd += s.usageCost;
-    } else if (s.lastResult) {
-      costUsd += s.lastResult.cost || 0;
-    }
     if (s.lastResult) {
+      costUsd += s.lastResult.cost || 0;
       const u = s.lastResult.usage || {};
       inputTokens += u.input_tokens || 0;
       outputTokens += u.output_tokens || 0;
     }
   }
   return { costUsd, inputTokens, outputTokens };
+}
+
+/**
+ * Apply a /usage report (from the usage-fetcher) to the account-wide window state. rate_limits is
+ * account-wide; each window's utilization is a 0-100 percentage and resets_at is an ISO timestamp.
+ */
+function applyUsageReport(report) {
+  if (!report) {
+    return;
+  }
+  if (report.subscriptionType) {
+    accountSubscription = report.subscriptionType;
+  }
+  accountRateLimitsAvailable = !!report.available;
+  const limits = report.rateLimits || {};
+  for (const [key, w] of Object.entries(limits)) {
+    if (!w || typeof w.utilization !== "number") {
+      continue;
+    }
+    accountUsage.set(key, {
+      type: key,
+      utilization: w.utilization,
+      resetAt: w.resets_at ? Date.parse(w.resets_at) || null : null,
+      updatedAt: now(),
+    });
+  }
 }
 
 function fleetSnapshot() {
@@ -695,7 +717,6 @@ function createSession(spec) {
     stdoutRemainder: "",
     runnerConfig,
     lastResult: null,
-    usageCost: null,
     dirty: true,
     proc: null,
   };
@@ -826,31 +847,6 @@ function handleRunnerEvent(s, event) {
         recordMessage(s, { role: "result", text: event.resultText });
       }
       break;
-    case "usage_report": {
-      const report = event.report || {};
-      if (typeof report.sessionCost === "number") {
-        s.usageCost = report.sessionCost;
-      }
-      if (report.subscriptionType) {
-        accountSubscription = report.subscriptionType;
-      }
-      accountRateLimitsAvailable = !!report.available;
-      // rate_limits is account-wide (same across sessions/devices) — latest report wins. Each
-      // window's utilization is already a 0-100 percentage; resets_at is an ISO timestamp.
-      const limits = report.rateLimits || {};
-      for (const [key, w] of Object.entries(limits)) {
-        if (!w || typeof w.utilization !== "number") {
-          continue;
-        }
-        accountUsage.set(key, {
-          type: key,
-          utilization: w.utilization,
-          resetAt: w.resets_at ? Date.parse(w.resets_at) || null : null,
-          updatedAt: now(),
-        });
-      }
-      break;
-    }
     case "rate_limit":
       s.resetAt = event.resetAt;
       s.status = "limited";
@@ -1237,14 +1233,54 @@ const server = http.createServer(async (req, res) => {
   sendJson(res, 404, { ok: false, reason: "not found" });
 });
 
-/** Ask one live runner for fresh /usage data; the windows are account-wide so one is enough. */
+/**
+ * Fetch fresh account usage by spawning the one-shot usage-fetcher (a throwaway SDK session). The
+ * SDK caches /usage per session, so reusing a chat session goes stale — a fresh session each poll is
+ * the only way to track account-wide usage that other sessions/devices are also consuming. Runs on
+ * the host, where the SDK is installed and Claude is logged in. No turn is taken, so it costs nothing.
+ */
+let usageFetchInFlight = false;
 function usageTick() {
-  for (const s of sessions.values()) {
-    if (runnerAlive(s)) {
-      writeToRunner(s, { type: "get_usage" });
-      return;
-    }
+  if (usageFetchInFlight) {
+    return;
   }
+  usageFetchInFlight = true;
+  let child;
+  try {
+    child = spawn(process.execPath, [USAGE_FETCHER_PATH], {
+      cwd: path.join(__dirname, ".."),
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    });
+  } catch {
+    usageFetchInFlight = false;
+    return;
+  }
+  let buf = "";
+  child.stdout.on("data", (d) => {
+    buf += d;
+  });
+  child.on("error", () => {
+    usageFetchInFlight = false;
+  });
+  child.on("exit", () => {
+    usageFetchInFlight = false;
+    for (const line of buf.split("\n")) {
+      const text = line.trim();
+      if (!text) {
+        continue;
+      }
+      try {
+        const event = JSON.parse(text);
+        if (event.type === "usage_report") {
+          applyUsageReport(event.report);
+          broadcastFleet();
+        }
+      } catch {
+        /* ignore non-JSON */
+      }
+    }
+  });
 }
 
 setInterval(schedulerTick, 1000);
