@@ -47,6 +47,12 @@ const prompt = createPushableAsyncIterable();
 const pendingApprovals = new Map();
 let approvalCounter = 0;
 
+// The live permission mode (changeable mid-session). canUseTool honors it so switching to
+// "Full auto" (bypassPermissions) or "Auto-accept edits" actually stops the prompts — without
+// this, a canUseTool callback overrides permissionMode and prompts for every tool.
+let currentMode = config.permissionMode || "default";
+const EDIT_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit", "Update", "Create", "ApplyPatch"]);
+
 function emit(event) {
   process.stdout.write(JSON.stringify(event) + "\n");
 }
@@ -112,12 +118,20 @@ function detectRateLimit(message) {
   }
 }
 
-/** Permission callback for "ask" policy: surface a request and wait for the UI's decision. */
+/** Permission callback for "ask" policy: auto-allow per the live mode, else prompt the UI. */
 async function canUseTool(toolName, input) {
+  // "Full auto" → allow everything (incl. Bash/git). "Auto-accept edits" → allow file edits only.
+  // Echo `updatedInput` (the SDK uses it as the input to actually run the tool).
+  if (currentMode === "bypassPermissions") {
+    return { behavior: "allow", updatedInput: input };
+  }
+  if (currentMode === "acceptEdits" && EDIT_TOOLS.has(toolName)) {
+    return { behavior: "allow", updatedInput: input };
+  }
   const id = `appr_${++approvalCounter}`;
   emit({ type: "approval_request", id, tool: toolName, input });
   return new Promise((resolve) => {
-    pendingApprovals.set(id, resolve);
+    pendingApprovals.set(id, { resolve, input });
   });
 }
 
@@ -147,25 +161,28 @@ rl.on("line", (line) => {
       prompt.push({ type: "user", message: { role: "user", content: "continue" } });
       break;
     case "approval": {
-      const resolve = pendingApprovals.get(cmd.id);
-      if (resolve) {
+      const entry = pendingApprovals.get(cmd.id);
+      if (entry) {
         pendingApprovals.delete(cmd.id);
         if (cmd.decision === "allow") {
-          resolve({ behavior: "allow" });
+          entry.resolve({ behavior: "allow", updatedInput: entry.input });
         } else {
-          resolve({ behavior: "deny", message: cmd.message || "Denied by user." });
+          entry.resolve({ behavior: "deny", message: cmd.message || "Denied by user." });
         }
       }
       break;
     }
-    case "set_mode":
+    case "set_mode": {
+      const mode = String(cmd.mode || "default");
+      currentMode = mode; // canUseTool reads this immediately, so FUTURE tools auto-allow
+      emit({ type: "mode", mode });
       if (sdkSession && typeof sdkSession.setPermissionMode === "function") {
         sdkSession
-          .setPermissionMode(String(cmd.mode || "default"))
-          .then(() => emit({ type: "mode", mode: String(cmd.mode || "default") }))
+          .setPermissionMode(mode)
           .catch((e) => emit({ type: "log", level: "warn", message: `set mode failed: ${e}` }));
       }
       break;
+    }
     case "set_model":
       if (sdkSession && typeof sdkSession.setModel === "function") {
         const model = cmd.model ? String(cmd.model) : undefined;

@@ -37,6 +37,8 @@ const MESSAGE_CAP = 500;
 const SESSIONS_DIR = config.sessions.dir;
 const REPO_LOCAL_ROOTS = (config.repos && Array.isArray(config.repos.localRoots)) ? config.repos.localRoots : [];
 const REPO_MAX_DEPTH = (config.repos && config.repos.maxDepth) || 3;
+/** Tools "Auto-accept edits" mode auto-approves (file edits). "Full auto" approves everything. */
+const EDIT_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit", "Update", "Create", "ApplyPatch"]);
 try {
   fs.mkdirSync(SESSIONS_DIR, { recursive: true });
 } catch {
@@ -1352,6 +1354,14 @@ const server = http.createServer(async (req, res) => {
       const mode = String(body.mode || "default");
       s.permissionMode = mode; // optimistic; runner echoes back a "mode" event on success
       const ok = writeToRunner(s, { type: "set_mode", mode });
+      // Release any approval already waiting that this mode allows — via the normal approval channel,
+      // so the runner unblocks AND the modal clears. (canUseTool auto-allows future tools itself.)
+      for (const [id, appr] of s.pendingApprovals) {
+        if (mode === "bypassPermissions" || (mode === "acceptEdits" && EDIT_TOOLS.has(appr.tool))) {
+          s.pendingApprovals.delete(id);
+          writeToRunner(s, { type: "approval", id, decision: "allow" });
+        }
+      }
       sendJson(res, 200, { ok });
     } else if (verb === "set-model") {
       const model = body.model ? String(body.model) : null;
