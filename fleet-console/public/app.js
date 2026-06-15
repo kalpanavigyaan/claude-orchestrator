@@ -28,6 +28,8 @@ const usageBarEl = el("usage-bar");
 const workingEl = el("working");
 const workingTextEl = el("working-text");
 const workingCmdEl = el("working-cmd");
+const statusbarEl = el("statusbar");
+const sbTextEl = el("sb-text");
 
 function api(path, body) {
   return fetch(path, {
@@ -321,9 +323,12 @@ function mdToHtml(src) {
   return out.join("");
 }
 
+let connected = false;
 function setConnected(on) {
+  connected = on;
   connEl.textContent = on ? "live" : "offline";
   connEl.className = "conn " + (on ? "online" : "offline");
+  renderStatusBar();
 }
 
 // ---- account usage card ----------------------------------------------------
@@ -444,6 +449,8 @@ function renderFleet() {
     }
   }
   updateWorking();
+  renderStatusBar();
+  updateComposer();
 }
 
 /** Show a status line under the chat so the user always knows what the agent is doing. */
@@ -467,6 +474,86 @@ function updateWorking() {
   }
   workingEl.classList.toggle("err", err);
   workingEl.classList.remove("hidden");
+}
+
+// ---- bottom status bar -----------------------------------------------------
+// Always-visible: connection to Claude + the selected session's activity, with a live elapsed
+// timer so a slow first response (runner start + model call) clearly reads as "working", not stuck.
+
+let sbBusyKey = null;
+let sbBusySince = 0;
+let sendingSince = 0; // set on send so the bar shows "Sending…" until the status flips to running
+
+function renderStatusBar() {
+  if (!statusbarEl || !sbTextEl) return;
+  // Connection first.
+  if (!connected || !latest) {
+    statusbarEl.className = "statusbar offline";
+    sbTextEl.textContent = latest ? "Reconnecting to the orchestrator…" : "Connecting to the orchestrator…";
+    sbBusyKey = null;
+    return;
+  }
+  // Viewing a saved session (read-only).
+  if (viewingRel && !selectedId) {
+    statusbarEl.className = "statusbar";
+    sbTextEl.textContent = "Viewing a past session (read-only) — create a session to chat";
+    sbBusyKey = null;
+    return;
+  }
+  const s = selectedId && latest.sessions ? latest.sessions.find((x) => x.id === selectedId) : null;
+  if (!s) {
+    statusbarEl.className = "statusbar";
+    const n = latest.sessions ? latest.sessions.length : 0;
+    sbTextEl.textContent = n ? "Connected · select a session to chat" : "Connected · no active session — click New session";
+    sbBusyKey = null;
+    return;
+  }
+  const busy = s.status === "running" || s.status === "starting";
+  const key = busy ? s.id + ":" + s.status : null;
+  if (key && key !== sbBusyKey) { sbBusyKey = key; sbBusySince = serverNow(); }
+  if (!busy) sbBusyKey = null;
+  if (s.status === "running" || s.status === "idle") sendingSince = 0; // request reached the agent
+  const secs = (since) => Math.max(0, Math.round((serverNow() - since) / 1000)) + "s";
+
+  let cls = "statusbar";
+  let text;
+  if (sendingSince && (s.status === "idle" || s.status === "ended")) {
+    cls = "statusbar busy";
+    text = `Sending to Claude… ${secs(sendingSince)}`;
+  } else if (s.status === "running") {
+    cls = "statusbar busy";
+    text = `Claude is working… ${secs(sbBusySince)}` + (lastTool ? `  ·  🔧 ${toolSummary(lastTool)}` : "");
+  } else if (s.status === "starting") {
+    cls = "statusbar busy";
+    text = `Starting session… ${secs(sbBusySince)}`;
+  } else if (s.status === "limited") {
+    cls = "statusbar warn";
+    text = "Usage limit — auto-continues" + (s.nextContinueAt ? " in " + fmtCountdown(s.nextContinueAt) : " after reset");
+  } else if (s.status === "error") {
+    cls = "statusbar err";
+    text = "Runner stopped — press Restart";
+  } else if (s.status === "ended") {
+    cls = "statusbar";
+    text = "Session ended — press Restart or send a message";
+  } else {
+    text = "Connected · ready";
+  }
+  statusbarEl.className = cls;
+  sbTextEl.textContent = `${s.label} · ${text}`;
+}
+
+/** Enable/disable the composer and set a helpful placeholder based on what's selected. */
+function updateComposer() {
+  if (!composer || !input) return;
+  const canSend = !!selectedId; // a live session is selected (past read-only views clear selectedId)
+  input.disabled = !canSend;
+  const btn = composer.querySelector("button");
+  if (btn) btn.disabled = !canSend;
+  input.placeholder = canSend
+    ? "Message the agent… (Enter to send, Shift+Enter for newline)"
+    : viewingRel
+      ? "Read-only past session — create a new session to chat"
+      : "Create or select a session to chat";
 }
 
 const MODE_OPTIONS = [
@@ -611,6 +698,8 @@ function selectSession(id) {
   seenApprovalIds = new Set();
   lastTool = null;
   for (const n of el("history-list-side") ? el("history-list-side").children : []) n.classList.remove("active");
+  updateComposer(); // enable the composer immediately, without waiting for the next poll
+  renderStatusBar();
   renderFleet();
 
   // Poll-driven so the conversation loads/updates in ANY browser (including embedded ones
@@ -729,6 +818,8 @@ async function sendMessage() {
   if (!text || !selectedId) return;
   const id = selectedId;
   input.value = "";
+  sendingSince = serverNow(); // status bar shows "Sending to Claude…" until the agent picks it up
+  renderStatusBar();
   // Optimistic feedback so the UI reacts instantly even before the next poll cycle.
   if (workingEl) {
     workingTextEl.textContent = "Claude is working…";
@@ -1056,6 +1147,8 @@ async function viewPastSession(rel) {
   approvalQueue = [];
   for (const n of sessionsEl.children) n.classList.remove("active");
   renderHistorySidebar();
+  updateComposer(); // read-only past view → disable the composer with a hint
+  renderStatusBar();
   if (workingEl) workingEl.classList.add("hidden");
   messagesEl.innerHTML = '<div class="msg system">Loading…</div>';
   const data = await getJson(`/api/history/item?path=${encodeURIComponent(rel)}`);
@@ -1191,9 +1284,11 @@ function connectFleet() {
 async function pollFleet() {
   const d = await getJson("/api/state");
   if (d) applyFleet(d);
+  else setConnected(false);
 }
 
 function tick() {
+  renderStatusBar(); // keep the elapsed timer / "Sending…" counter live
   if (!latest) return;
   countdownEl.textContent = latest.account.resetAt ? fmtCountdown(latest.account.resetAt) : "—";
   for (const span of usageBarEl ? usageBarEl.querySelectorAll(".usage-reset") : []) {
@@ -1209,6 +1304,8 @@ function tick() {
   }
 }
 
+renderStatusBar();
+updateComposer();
 connectFleet();
 pollFleet();
 renderWslList();
