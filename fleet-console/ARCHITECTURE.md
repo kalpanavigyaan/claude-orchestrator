@@ -26,19 +26,19 @@ a host-resident server with a browser UI is reachable from any device for free, 
 ```
                  Browser (laptop / iPad Safari)
                  ┌───────────────────────────────────────────┐
-                 │  Fleet view: all sessions + status         │
-                 │  Session tab: streaming chat + input       │
-                 │  Approval modal: allow / deny a tool        │
+                 │  Left: distros · sessions · repos · history │
+                 │  Center: markdown chat + status bar         │
+                 │  Right: Controls + Commands · usage bar     │
                  └───────────────────────────────────────────┘
                    │  REST (POST actions)      ▲  SSE (stream)
                    ▼                           │
                  ┌───────────────────────────────────────────┐
                  │      ORCHESTRATOR (Node, host:4318)        │
-                 │  • session registry + state                │
+                 │  • session registry + state + persistence   │
                  │  • spawns one RUNNER per session            │
                  │  • routes messages browser ⇄ runner         │
                  │  • 5-hour reset scheduler (auto-continue)   │
-                 │  • token auth, serves the web UI            │
+                 │  • usage-fetcher · repos scan · config/auth │
                  └───────────────────────────────────────────┘
                    │ JSON-lines over stdio (one child per session)
         ┌──────────┼───────────────────────────┐
@@ -65,37 +65,56 @@ A small Node process that owns exactly one Agent SDK session:
     lets it run unattended so the 5-hour auto-continue is useful.
   - `ask` (hands-on): `canUseTool` emits an `approval_request` and **blocks** until the
     orchestrator returns `{behavior:"allow"|"deny"}` — surfaced as a web modal.
+- On startup it reports `supportedModels()` and `supportedCommands()` (for the model switcher and
+  the Commands panel) and can change the mode/model mid‑session via the SDK control methods
+  `setPermissionMode()` / `setModel()`, and stop the current turn via `interrupt()`.
+- Can **resume** a saved conversation: `options.resume = <sessionId>`, or `options.continue` to
+  continue the most recent conversation in the cwd.
 - Speaks **JSON lines** over stdio: emits events on stdout, reads commands on stdin.
   - stdout events: `status`, `assistant` (text), `tool_use`, `approval_request`, `result`
-    (cost/usage/turns), `rate_limit` (with `resetAt`), `log`.
-  - stdin commands: `user` (send text), `approval` (resolve a request), `continue`,
-    `shutdown`.
-- **Rate-limit detection:** scans messages for an account-limit marker (regex + structured
-  fields) and emits `rate_limit` with a `resetAt` (the platform value if present, else
-  `now + 5h`). Isolated/configurable, like the rest of the system.
+    (cost/usage/turns), `rate_limit` (with `resetAt`), `models`, `commands`, `mode`, `model`,
+    `session_id`, `log`.
+  - stdin commands: `user` (send text), `continue`, `approval` (resolve a request),
+    `set_mode`, `set_model`, `interrupt`, `shutdown`.
+- **Rate-limit detection:** the SDK's `rate_limit_event` with `status: "rejected"` means the
+  account limit is hit; the runner emits `rate_limit` with a `resetAt` (the platform value if
+  present, else `now + 5h`).
 
 ## Orchestrator (host service)
 
-- **Registry** of sessions: id, label, host (`local`/`wsl`), cwd, model, policy, status,
-  `resetAt`, `nextContinueAt`, a ring buffer of recent messages, and pending approvals.
+- **Registry** of sessions: id, label, host (`local`/`wsl`), cwd, model, permissionMode, policy,
+  status, `resetAt`, `nextContinueAt`, `sdkSessionId` (for resume), recent messages, approvals.
 - **Spawns** a runner per session via host adapters (`local` = node child; `wsl` =
-  `wsl.exe -d <distro> node <runner>` with the runner path translated to `/mnt/...` and the
-  cwd a native Linux path — no UNC working-directory problem).
+  `wsl.exe -d <distro> <node> <runner>` with the runner path translated to `/mnt/...` and the
+  cwd a native Linux path — no UNC working-directory problem). A dead runner is respawned on the
+  next message (`ensureRunner`) so messages aren't dropped.
 - **Routes**: browser POST → runner stdin; runner stdout events → session state + SSE to the
-  browser.
-- **Scheduler**: when a session reports `rate_limit` (status `limited`), schedule a
-  `continue` for `resetAt + buffer`; because the limit is account-wide, a single reset clock
-  also drives a "continue all". Dedupe guard prevents doubles.
-- **Auth**: optional bearer token (`FLEET_TOKEN`); bind to a chosen host/interface. Serves the
-  static web UI.
+  browser. Persists each session to `session.json` + `conversation.md`.
+- **Scheduler**: when a session reports `rate_limit` (status `limited`), schedule a `continue`
+  for `resetAt + buffer` for each live runner; account-wide, so one reset clock drives a
+  "continue all". Dedupe/interval guard prevents doubles.
+- **Account usage**: a one‑shot `usage-fetcher` (a throwaway SDK session that reads `/usage`
+  without taking a turn) runs at startup and on the `usage.pollSeconds` timer, so account‑wide
+  utilization stays fresh independent of chat sessions.
+- **Repositories**: scans `repos.localRoots` (host) and each running WSL distro for git repos +
+  `status --porcelain` counts, cached ~12s and refreshed in the background.
+- **Resume**: rebuilds a saved session in place (`resume`/`continue`) so you can keep chatting.
+- **Config + auth**: `config/config.yaml` (env overrides); optional bearer token; serves the UI.
 
 ## Browser UI
 
-- **Fleet view**: every session with status, model, host, account reset countdown; buttons to
-  create a session and continue/stop.
-- **Session tab**: the streaming conversation (assistant text + tool calls), an input box to
-  steer, and an **approval modal** when an `ask` session requests a tool.
-- Plain fetch + `EventSource` + DOM — runs on iPad Safari with nothing installed.
+- **Left sidebar**: WSL distros, live Sessions, a **Repositories** panel (repos + change badges),
+  and **Past sessions** as a tree (react‑arborist via CDN, with a plain‑tree fallback).
+- **Center**: the conversation rendered as markdown (syntax‑highlighted code; tool calls collapsed
+  to a one‑line working indicator with a **Stop**/interrupt button), the composer, and a bottom
+  **status bar** (connection + activity with a live elapsed timer).
+- **Top bar**: connection, account‑reset countdown, and the account‑usage bar.
+- **Right sidebar** (always visible): a **Controls** tab (global actions + the session's
+  mode/model dropdowns and per‑session actions, or **Resume** for a past session) and a
+  **Commands** tab (slash commands → insert into the chat). Approvals appear as a modal.
+- Plain fetch + `EventSource` + DOM — runs on iPad Safari with nothing installed. To avoid a
+  duplicate‑render race, per‑session syncs are serialized; the redundant `result` echo of the
+  final assistant text is suppressed.
 
 ## How it survives the reset
 
@@ -109,4 +128,3 @@ Because the orchestrator **owns** each session's query, "send a message" is just
 user message into that session's async-iterable prompt, and "approve a tool" is resolving the
 `canUseTool` promise. No webview, no CDP, no keystroke injection — the interactivity is
 first-class because we hold the session, not because we are poking someone else's UI.
-```

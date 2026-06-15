@@ -52,14 +52,6 @@ function safeSegment(value, fallback = "session") {
   return cleaned || fallback;
 }
 
-/**
- * Translate a host path to the form the session's agent sees: unchanged for a local
- * (Windows) session, /mnt/<drive>/... for a WSL session (the agent runs inside the distro).
- */
-function agentPathFor(session, hostPath) {
-  return session.host === "wsl" ? toMnt(hostPath) : hostPath;
-}
-
 /** @type {Map<string, any>} */
 const sessions = new Map();
 /** Fleet-level SSE subscribers. */
@@ -786,7 +778,6 @@ function createSession(spec) {
     ],
     initialPrompt: spec.initialPrompt || "",
     systemPromptAppend: autonomyNote + instructionsNote,
-    limitPattern: spec.limitPattern || "",
     maxTurns: spec.maxTurns || undefined,
     // Resume a saved conversation: by SDK session id when known, else continue the most recent
     // conversation in this cwd (covers sessions created before ids were captured).
@@ -819,7 +810,6 @@ function createSession(spec) {
     messages: Array.isArray(spec.preload) ? spec.preload : [],
     pendingApprovals: new Map(),
     sse: new Set(),
-    stdoutRemainder: "",
     runnerConfig,
     lastResult: null,
     dirty: true,

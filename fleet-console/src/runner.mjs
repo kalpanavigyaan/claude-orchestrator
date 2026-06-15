@@ -12,7 +12,7 @@
  *
  * Config is passed as JSON in the FLEET_SESSION environment variable:
  *   { cwd, model, permissionMode, policy, additionalDirectories, initialPrompt,
- *     systemPromptAppend, limitPattern, maxTurns }
+ *     systemPromptAppend, maxTurns, resume, continueRecent }
  *
  * Auth is the Claude Code subscription via the bundled `claude` binary (no API key).
  */
