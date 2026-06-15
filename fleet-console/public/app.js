@@ -569,11 +569,13 @@ function selectSession(id) {
   if (sessionES) { sessionES.close(); sessionES = null; }
   if (sessionPollTimer) { clearInterval(sessionPollTimer); sessionPollTimer = null; }
   selectedId = id;
+  viewingRel = null; // leaving any past-session view
   messagesEl.innerHTML = "";
   renderedCount = 0;
   approvalQueue = [];
   seenApprovalIds = new Set();
   lastTool = null;
+  for (const n of el("history-list-side") ? el("history-list-side").children : []) n.classList.remove("active");
   renderFleet();
 
   // Poll-driven so the conversation loads/updates in ANY browser (including embedded ones
@@ -816,8 +818,70 @@ el("f-create").addEventListener("click", async () => {
   el("new-modal").classList.add("hidden");
   if (res && res.id) {
     selectSession(res.id);
+    renderHistorySidebar();
   }
 });
+
+// ---- past sessions in the sidebar ------------------------------------------
+
+let viewingRel = null;
+
+/** List saved sessions in the sidebar (excluding ones currently live). Click to view read-only. */
+async function renderHistorySidebar() {
+  const listEl = el("history-list-side");
+  if (!listEl) return;
+  const data = await getJson("/api/history");
+  const sessions = (data && data.sessions) || [];
+  const liveDirs = (latest && latest.sessions ? latest.sessions : []).map((s) => (s.sessionDir || "").replace(/\\/g, "/"));
+  const past = sessions.filter((s) => {
+    const rel = (s.rel || "").replace(/\\/g, "/");
+    return rel && !liveDirs.some((d) => d.endsWith(rel));
+  });
+  listEl.innerHTML = "";
+  if (!past.length) {
+    listEl.innerHTML = '<div class="muted-note" style="padding:4px 2px">none yet</div>';
+    return;
+  }
+  for (const s of past) {
+    const item = document.createElement("div");
+    item.className = "session-item past" + (s.rel === viewingRel ? " active" : "");
+    item.innerHTML =
+      `<div class="row1"><span class="name">${escapeHtml(s.title)}</span>` +
+      `<span class="badge ${escapeHtml(s.status || "")}">${escapeHtml(s.status || "saved")}</span></div>` +
+      `<div class="sub">${escapeHtml(s.group)} · ${escapeHtml(s.repo)} · ${s.messages} msgs</div>`;
+    item.addEventListener("click", () => viewPastSession(s.rel));
+    listEl.appendChild(item);
+  }
+}
+
+/** Render a saved session's conversation into the main chat area, read-only. */
+async function viewPastSession(rel) {
+  if (sessionES) { sessionES.close(); sessionES = null; }
+  if (sessionPollTimer) { clearInterval(sessionPollTimer); sessionPollTimer = null; }
+  selectedId = null;
+  viewingRel = rel;
+  lastTool = null;
+  approvalQueue = [];
+  for (const n of sessionsEl.children) n.classList.remove("active");
+  renderHistorySidebar();
+  if (workingEl) workingEl.classList.add("hidden");
+  messagesEl.innerHTML = '<div class="msg system">Loading…</div>';
+  const data = await getJson(`/api/history/item?path=${encodeURIComponent(rel)}`);
+  if (rel !== viewingRel) return; // switched away while loading
+  if (!data || !data.meta) {
+    messagesEl.innerHTML = '<div class="msg system">Could not load this session.</div>';
+    return;
+  }
+  const m = data.meta;
+  const cost = m.lastResult ? " · $" + (m.lastResult.cost || 0).toFixed(4) : "";
+  chatHeaderEl.innerHTML =
+    `<span><strong>${escapeHtml(m.label || "")}</strong> — <span class="badge ${escapeHtml(m.status || "")}">${escapeHtml(m.status || "saved")}</span>` +
+    `${cost} · <span class="muted-note">past session (read-only)</span></span>`;
+  messagesEl.innerHTML = "";
+  for (const e of m.interactions || []) {
+    appendMessage(e.tool ? { role: "tool", name: e.tool, input: e.input } : { role: e.role, text: e.text });
+  }
+}
 
 // ---- account actions -------------------------------------------------------
 
@@ -956,6 +1020,8 @@ function tick() {
 connectFleet();
 pollFleet();
 renderWslList();
+renderHistorySidebar();
 setInterval(tick, 1000);
 setInterval(pollFleet, 3000);
 setInterval(renderWslList, 15000);
+setInterval(renderHistorySidebar, 15000);

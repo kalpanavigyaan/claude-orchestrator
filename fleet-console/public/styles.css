@@ -103,6 +103,9 @@ main { flex: 1; display: flex; min-height: 0; }
 .badge.starting { color: var(--amber); }
 .badge.idle { color: var(--accent); }
 .badge.error, .badge.ended { color: var(--red); }
+.badge.saved { color: var(--muted); }
+.session-item.past { opacity: .9; }
+.session-item.past .name { font-weight: 500; }
 .session-item .sub { color: var(--muted); font-size: 11px; margin-top: 4px; word-break: break-all; }
 .session-item .timer { color: var(--amber); font-variant-numeric: tabular-nums; font-size: 12px; }
 
