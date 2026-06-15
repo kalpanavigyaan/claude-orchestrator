@@ -73,6 +73,8 @@ let accountSubscription = null;
 let accountRateLimitsAvailable = false;
 /** Models the SDK reports as available (same across sessions); for the on-the-fly model switcher. */
 let availableModels = [];
+/** Slash commands the SDK reports (for the commands panel). */
+let availableCommands = [];
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -215,6 +217,7 @@ function fleetSnapshot() {
       available: accountRateLimitsAvailable,
     },
     models: availableModels,
+    commands: availableCommands,
     sessions: [...sessions.values()].map(sessionSummary),
   };
 }
@@ -910,6 +913,11 @@ function handleRunnerEvent(s, event) {
         availableModels = event.models;
       }
       break;
+    case "commands":
+      if (Array.isArray(event.commands)) {
+        availableCommands = event.commands;
+      }
+      break;
     case "mode":
       if (event.mode) {
         s.permissionMode = event.mode;
@@ -1238,6 +1246,14 @@ const server = http.createServer(async (req, res) => {
         });
       }
       sendJson(res, 200, { ok: r.alive });
+    } else if (verb === "interrupt") {
+      // Stop the current task without ending the session (the SDK keeps the conversation alive).
+      const ok = writeToRunner(s, { type: "interrupt" });
+      if (ok) {
+        s.status = "idle"; // optimistic; the runner confirms via a status event
+        recordMessage(s, { role: "system", text: "Interrupted — Claude stopped the current task." });
+      }
+      sendJson(res, 200, { ok });
     } else if (verb === "set-mode") {
       const mode = String(body.mode || "default");
       s.permissionMode = mode; // optimistic; runner echoes back a "mode" event on success

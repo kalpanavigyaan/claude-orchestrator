@@ -175,6 +175,15 @@ rl.on("line", (line) => {
           .catch((e) => emit({ type: "log", level: "warn", message: `set model failed: ${e}` }));
       }
       break;
+    case "interrupt":
+      // Stop the current turn but keep the session alive so the user can keep chatting.
+      if (sdkSession && typeof sdkSession.interrupt === "function") {
+        sdkSession
+          .interrupt()
+          .then(() => emit({ type: "status", status: "idle" }))
+          .catch((e) => emit({ type: "log", level: "warn", message: `interrupt failed: ${e}` }));
+      }
+      break;
     case "shutdown":
       prompt.end();
       setTimeout(() => process.exit(0), 200);
@@ -233,6 +242,9 @@ async function main() {
       try {
         if (typeof session.supportedModels === "function") {
           emit({ type: "models", models: await session.supportedModels() });
+        }
+        if (typeof session.supportedCommands === "function") {
+          emit({ type: "commands", commands: await session.supportedCommands() });
         }
       } catch {
         /* control method unavailable — ignore */

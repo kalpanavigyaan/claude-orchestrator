@@ -18,6 +18,8 @@
       <span id="account-countdown" class="countdown">—</span>
       <button id="btn-continue-all" class="primary">Continue all</button>
       <button id="btn-set-reset">Set reset…</button>
+      <button id="btn-controls">Controls</button>
+      <button id="btn-commands">Commands</button>
       <button id="btn-history">History</button>
       <button id="btn-new">New session</button>
     </div>
@@ -45,7 +47,11 @@
       <div id="chat-header" class="chat-header">Select or create a session.</div>
       <div id="messages" class="messages"></div>
       <div id="working" class="working hidden">
-        <div class="working-status"><span class="dots"><i></i><i></i><i></i></span> <span id="working-text">Claude is working…</span></div>
+        <div class="working-status">
+          <span class="dots"><i></i><i></i><i></i></span>
+          <span id="working-text">Claude is working…</span>
+          <button id="working-stop" class="working-stop" title="Stop the current task (keeps the session)">⏹ Stop</button>
+        </div>
         <span id="working-cmd" class="working-cmd"></span>
       </div>
       <form id="composer" class="composer" autocomplete="off">
@@ -53,6 +59,21 @@
         <button type="submit" class="primary">Send</button>
       </form>
     </section>
+
+    <aside id="cmdbar" class="cmdbar hidden">
+      <div class="rb-tabs">
+        <button class="rb-tab active" data-tab="controls">Controls</button>
+        <button class="rb-tab" data-tab="commands">Commands</button>
+        <span class="rb-spacer"></span>
+        <button id="rb-close" title="Close">✕</button>
+      </div>
+      <div id="rb-controls" class="rb-pane"></div>
+      <div id="rb-commands" class="rb-pane hidden">
+        <input id="cmd-filter" class="cmd-filter" placeholder="Filter commands…" />
+        <div id="cmd-list" class="cmd-list"></div>
+        <div class="cmdbar-foot">Click a command to insert it into the chat, then add arguments and send.</div>
+      </div>
+    </aside>
   </main>
 
   <footer id="statusbar" class="statusbar"><span class="sb-dot idle"></span><span id="sb-text">Connecting…</span><span id="sb-usage" class="sb-usage"></span></footer>

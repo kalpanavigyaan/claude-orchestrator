@@ -28,9 +28,14 @@ const usageBarEl = el("usage-bar");
 const workingEl = el("working");
 const workingTextEl = el("working-text");
 const workingCmdEl = el("working-cmd");
+const workingStopEl = el("working-stop");
 const statusbarEl = el("statusbar");
 const sbTextEl = el("sb-text");
 const sbUsageEl = el("sb-usage");
+const cmdbarEl = el("cmdbar");
+const cmdListEl = el("cmd-list");
+const cmdFilterEl = el("cmd-filter");
+const rbControlsEl = el("rb-controls");
 
 function api(path, body) {
   return fetch(path, {
@@ -452,6 +457,8 @@ function renderFleet() {
   updateWorking();
   renderStatusBar();
   updateComposer();
+  renderControls(sel);
+  if (cmdbarEl && !cmdbarEl.classList.contains("hidden") && !el("rb-commands").classList.contains("hidden")) renderCommands();
 }
 
 /** Show a status line under the chat so the user always knows what the agent is doing. */
@@ -473,8 +480,23 @@ function updateWorking() {
   if (workingCmdEl) {
     workingCmdEl.textContent = showCmd && lastTool ? "🔧 " + toolSummary(lastTool) : "";
   }
+  if (workingStopEl) {
+    // Only offer "Stop" when there's an active turn to interrupt.
+    workingStopEl.classList.toggle("hidden", !(s.status === "running" || s.status === "starting"));
+  }
   workingEl.classList.toggle("err", err);
   workingEl.classList.remove("hidden");
+}
+
+if (workingStopEl) {
+  workingStopEl.addEventListener("click", async () => {
+    if (!selectedId) return;
+    workingStopEl.disabled = true;
+    await api(`/api/sessions/${selectedId}/interrupt`);
+    pollFleet();
+    syncSession(selectedId);
+    setTimeout(() => { workingStopEl.disabled = false; }, 800);
+  });
 }
 
 // ---- bottom status bar -----------------------------------------------------
@@ -576,54 +598,74 @@ const MODE_OPTIONS = [
   { value: "bypassPermissions", label: "Full auto" },
 ];
 
-let lastHeaderSig = null;
-
 function renderChatHeader(s) {
-  const models = (latest && latest.models) || [];
-  // Only rebuild when something visible changed — otherwise the <select>s would reset/close on
-  // every poll while the user is using them.
-  const sig = [s.id, s.status, s.permissionMode, s.model, models.length,
-    s.lastResult ? s.lastResult.cost : 0].join("|");
-  if (sig === lastHeaderSig) return;
-  lastHeaderSig = sig;
-
+  // Slim header — the session controls live in the right-side "Controls" tab now.
   const cost = s.lastResult ? " · $" + (s.lastResult.cost || 0).toFixed(4) : "";
+  chatHeaderEl.innerHTML =
+    `<span><strong>${escapeHtml(s.label)}</strong> — <span class="badge ${escapeHtml(s.status)}">${escapeHtml(s.status)}</span>${cost}</span>`;
+}
+
+let lastControlsSig = null;
+
+/** Render the session controls (mode/model + actions) into the right "Controls" pane. */
+function renderControls(s) {
+  if (!rbControlsEl) return;
+  if (!s) {
+    rbControlsEl.innerHTML = '<div class="rb-hint">Select or create a session to see its controls.</div>';
+    lastControlsSig = null;
+    return;
+  }
+  const models = (latest && latest.models) || [];
+  // Only rebuild when something changed, so the <select>s don't reset/close on every poll.
+  const sig = [s.id, s.status, s.permissionMode, s.model, models.length].join("|");
+  if (sig === lastControlsSig) return;
+  lastControlsSig = sig;
+
   const modeOpts = MODE_OPTIONS.map(
     (m) => `<option value="${m.value}" ${m.value === (s.permissionMode || "default") ? "selected" : ""}>${escapeHtml(m.label)}</option>`
   ).join("");
-  let modelOpts = `<option value="" ${!s.model ? "selected" : ""}>Model: default</option>`;
+  let modelOpts = `<option value="" ${!s.model ? "selected" : ""}>Default</option>`;
   for (const m of models) {
     modelOpts += `<option value="${escapeHtml(m.value)}" ${m.value === s.model ? "selected" : ""}>${escapeHtml(m.displayName || m.value)}</option>`;
   }
-  chatHeaderEl.innerHTML = `
-    <span><strong>${escapeHtml(s.label)}</strong> — <span class="badge ${escapeHtml(s.status)}">${escapeHtml(s.status)}</span>${cost}</span>
-    <span class="actions">
-      <select id="hdr-mode" class="hdr-select" title="Permission mode">${modeOpts}</select>
-      <select id="hdr-model" class="hdr-select" title="Model">${modelOpts}</select>
-      <button id="hdr-instr">Instructions</button>
-      <button id="hdr-restart">Restart</button>
-      <button id="hdr-continue">Continue</button>
-      <button id="hdr-stop">Stop</button>
-    </span>`;
-  el("hdr-mode").addEventListener("change", async (e) => {
+  rbControlsEl.innerHTML =
+    `<div class="rb-section">
+       <label class="rb-label">Permission mode</label>
+       <select id="ctl-mode" class="hdr-select">${modeOpts}</select>
+       <label class="rb-label">Model</label>
+       <select id="ctl-model" class="hdr-select">${modelOpts}</select>
+     </div>
+     <div class="rb-actions">
+       <button id="ctl-instr">📄 Instructions</button>
+       <button id="ctl-stop" class="rb-stop">⏹ Stop current task</button>
+       <button id="ctl-continue">▸ Continue</button>
+       <button id="ctl-restart">↻ Restart runner</button>
+       <button id="ctl-end" class="rb-end">⏏ End session</button>
+     </div>`;
+  el("ctl-mode").addEventListener("change", async (e) => {
     await api(`/api/sessions/${s.id}/set-mode`, { mode: e.target.value });
     pollFleet();
   });
-  el("hdr-model").addEventListener("change", async (e) => {
+  el("ctl-model").addEventListener("change", async (e) => {
     await api(`/api/sessions/${s.id}/set-model`, { model: e.target.value });
     pollFleet();
   });
-  el("hdr-instr").addEventListener("click", () => openInstructions(s.id));
-  el("hdr-restart").addEventListener("click", async () => {
+  el("ctl-instr").addEventListener("click", () => openInstructions(s.id));
+  el("ctl-stop").addEventListener("click", async () => {
+    await api(`/api/sessions/${s.id}/interrupt`);
+    pollFleet();
+    syncSession(s.id);
+  });
+  el("ctl-continue").addEventListener("click", async () => {
+    await api(`/api/sessions/${s.id}/continue`);
+    pollFleet();
+  });
+  el("ctl-restart").addEventListener("click", async () => {
     await api(`/api/sessions/${s.id}/restart`);
     pollFleet();
     syncSession(s.id);
   });
-  el("hdr-continue").addEventListener("click", async () => {
-    await api(`/api/sessions/${s.id}/continue`);
-    pollFleet();
-  });
-  el("hdr-stop").addEventListener("click", async () => {
+  el("ctl-end").addEventListener("click", async () => {
     await api(`/api/sessions/${s.id}/stop`);
     pollFleet();
   });
@@ -704,7 +746,7 @@ function selectSession(id) {
   if (sessionPollTimer) { clearInterval(sessionPollTimer); sessionPollTimer = null; }
   selectedId = id;
   viewingRel = null; // leaving any past-session view
-  lastHeaderSig = null; // force the header (mode/model selects) to rebuild for the new session
+  lastControlsSig = null; // force the Controls pane (mode/model selects) to rebuild for the new session
   messagesEl.innerHTML = "";
   renderedCount = 0;
   approvalQueue = [];
@@ -1215,6 +1257,68 @@ async function viewPastSession(rel) {
     appendMessage(e.tool ? { role: "tool", name: e.tool, input: e.input } : { role: e.role, text: e.text });
   }
 }
+
+// ---- slash commands panel --------------------------------------------------
+
+/** Render the available slash commands (filtered) into the right-side panel. */
+function renderCommands() {
+  if (!cmdListEl) return;
+  const cmds = (latest && latest.commands) || [];
+  const q = ((cmdFilterEl && cmdFilterEl.value) || "").trim().toLowerCase();
+  cmdListEl.innerHTML = "";
+  if (!cmds.length) {
+    cmdListEl.innerHTML = '<div class="muted-note" style="padding:8px">No commands yet — start or open a session.</div>';
+    return;
+  }
+  const filtered = cmds
+    .filter((c) => !q || c.name.toLowerCase().includes(q) || (c.description || "").toLowerCase().includes(q))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  if (!filtered.length) {
+    cmdListEl.innerHTML = '<div class="muted-note" style="padding:8px">No matches.</div>';
+    return;
+  }
+  for (const c of filtered) {
+    const item = document.createElement("div");
+    item.className = "cmd-item";
+    item.innerHTML =
+      `<div><span class="cmd-name">/${escapeHtml(c.name)}</span>` +
+      `${c.argumentHint ? `<span class="cmd-arg">${escapeHtml(c.argumentHint)}</span>` : ""}</div>` +
+      `${c.description ? `<div class="cmd-desc">${escapeHtml(c.description)}</div>` : ""}`;
+    item.addEventListener("click", () => insertCommand(c));
+    cmdListEl.appendChild(item);
+  }
+}
+
+/** Insert "/<name> " into the composer so the user can add arguments and send. */
+function insertCommand(c) {
+  if (!selectedId) {
+    alert("Open or create a session first, then pick a command.");
+    return;
+  }
+  if (!input) return;
+  input.value = `/${c.name} `;
+  input.focus();
+  input.selectionStart = input.selectionEnd = input.value.length;
+}
+
+function setRightTab(tab) {
+  for (const t of document.querySelectorAll(".rb-tab")) t.classList.toggle("active", t.dataset.tab === tab);
+  el("rb-controls").classList.toggle("hidden", tab !== "controls");
+  el("rb-commands").classList.toggle("hidden", tab !== "commands");
+  if (tab === "controls") renderControls(latest && selectedId ? latest.sessions.find((x) => x.id === selectedId) : null);
+  if (tab === "commands") renderCommands();
+}
+function openRightPanel(tab) {
+  cmdbarEl.classList.remove("hidden");
+  setRightTab(tab);
+}
+el("btn-controls").addEventListener("click", () => openRightPanel("controls"));
+el("btn-commands").addEventListener("click", () => openRightPanel("commands"));
+el("rb-close").addEventListener("click", () => cmdbarEl.classList.add("hidden"));
+for (const t of document.querySelectorAll(".rb-tab")) {
+  t.addEventListener("click", () => setRightTab(t.dataset.tab));
+}
+if (cmdFilterEl) cmdFilterEl.addEventListener("input", renderCommands);
 
 // ---- account actions -------------------------------------------------------
 

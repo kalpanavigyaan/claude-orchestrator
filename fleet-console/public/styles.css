@@ -137,6 +137,37 @@ details[open] > .tree-summary::before { transform: rotate(90deg); }
 .session-item .timer { color: var(--amber); font-variant-numeric: tabular-nums; font-size: 12px; }
 
 .chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+/* Right-side slash-commands panel */
+.cmdbar {
+  width: 280px; flex: 0 0 280px; border-left: 1px solid var(--border);
+  background: var(--panel); display: flex; flex-direction: column; min-height: 0;
+}
+.cmdbar.hidden { display: none; }
+.rb-tabs { display: flex; align-items: center; gap: 4px; padding: 8px 8px 0; border-bottom: 1px solid var(--border); }
+.rb-tabs .rb-spacer { flex: 1; }
+.rb-tab { background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--muted); cursor: pointer; padding: 6px 10px; font-size: 13px; min-height: auto; border-radius: 0; }
+.rb-tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.rb-tabs #rb-close { background: transparent; border: none; color: var(--muted); cursor: pointer; min-height: auto; padding: 2px 6px; font-size: 14px; }
+.rb-pane { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+.rb-pane.hidden { display: none; }
+.rb-section { padding: 12px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--border); }
+.rb-label { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-top: 6px; }
+.rb-section .hdr-select { max-width: none; width: 100%; }
+.rb-actions { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.rb-actions button { width: 100%; }
+.rb-actions .rb-end { border-color: var(--red); color: var(--red); }
+.rb-actions .rb-stop { border-color: var(--amber); color: var(--amber); }
+.rb-hint { padding: 16px 12px; color: var(--muted); font-size: 12px; }
+.cmd-filter { margin: 8px 10px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; font-size: 13px; }
+.cmd-list { flex: 1; overflow: auto; padding: 4px 8px 10px; }
+.cmd-item { padding: 7px 9px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
+.cmd-item:hover { background: var(--panel-2); border-color: var(--border); }
+.cmd-item .cmd-name { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 13px; color: var(--accent); }
+.cmd-item .cmd-arg { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: var(--amber); margin-left: 4px; }
+.cmd-item .cmd-desc { font-size: 11px; color: var(--muted); margin-top: 2px; line-height: 1.35; }
+.cmdbar-foot { padding: 8px 12px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); }
+@media (max-width: 720px) { .cmdbar { width: auto; flex: 0 0 auto; max-height: 40vh; border-left: none; border-top: 1px solid var(--border); } }
 .chat-header { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 13px; }
 .chat-header .actions { float: right; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .hdr-select {
@@ -191,6 +222,13 @@ details[open] > .tree-summary::before { transform: rotate(90deg); }
 .working.hidden { display: none; }
 .working.err { color: var(--red); }
 .working .working-status { display: flex; align-items: center; gap: 8px; }
+.working-stop {
+  margin-left: auto; min-height: 26px; padding: 3px 10px; font-size: 12px; font-weight: 600;
+  border-radius: 8px; border: 1px solid var(--red); color: var(--red); background: transparent; cursor: pointer;
+}
+.working-stop:hover { background: rgba(248,113,113,.12); }
+.working-stop.hidden { display: none; }
+.working-stop:disabled { opacity: .5; cursor: default; }
 .working .working-cmd { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 11px; color: var(--muted); opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .working .working-cmd:empty { display: none; }
 .working .dots { display: inline-flex; gap: 4px; }
