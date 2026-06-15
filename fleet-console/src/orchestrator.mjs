@@ -112,16 +112,27 @@ function authorized(req, query) {
 }
 
 function accountResetAt() {
+  // 1) An explicit manual reset wins.
   if (manualAccountReset && manualAccountReset > now()) {
     return manualAccountReset;
   }
+  // 2) An actual rate-limit hit (a session recorded a reject's resetAt).
   let max = null;
   for (const s of sessions.values()) {
     if (typeof s.resetAt === "number" && s.resetAt > now()) {
       max = max === null ? s.resetAt : Math.max(max, s.resetAt);
     }
   }
-  return max;
+  if (max !== null) {
+    return max;
+  }
+  // 3) Otherwise show the normal 5-hour window reset from the SDK /usage data, so the header always
+  //    has a meaningful "Account reset" countdown even when you're nowhere near a limit.
+  const fiveHour = accountUsage.get("five_hour");
+  if (fiveHour && typeof fiveHour.resetAt === "number" && fiveHour.resetAt > now()) {
+    return fiveHour.resetAt;
+  }
+  return null;
 }
 
 function sessionSummary(s) {
