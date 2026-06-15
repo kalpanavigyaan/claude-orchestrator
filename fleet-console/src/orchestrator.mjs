@@ -736,12 +736,11 @@ function createSession(spec) {
   const id = crypto.randomBytes(5).toString("hex");
   const policy = spec.policy === "ask" ? "ask" : "auto";
   const permissionMode = spec.permissionMode || "default"; // plan vs default; execution is via autoApprove
-  // What runs without asking. "auto" (walk-away) approves everything; "ask" approves nothing (prompts).
+  // What runs without asking. Default to everything approved (all checkboxes on) — the user opts out
+  // of categories they want to be prompted for. Honored as-is when the spec sets it explicitly.
   const autoApprove = Array.isArray(spec.autoApprove)
     ? spec.autoApprove
-    : policy === "auto"
-      ? ["edits", "shell", "other"]
-      : [];
+    : ["edits", "shell", "other"];
   const host = spec.host === "wsl" ? "wsl" : "local";
   const label = spec.label || spec.cwd || id;
 
