@@ -123,6 +123,10 @@ async function canUseTool(toolName, input) {
 
 // ---- stdin command handling ------------------------------------------------
 
+// The active SDK query object (set once the session starts). Its control methods let us change the
+// permission mode / model mid-session, which only works in streaming input mode (what we use).
+let sdkSession = null;
+
 const rl = readline.createInterface({ input: process.stdin });
 rl.on("line", (line) => {
   const text = line.trim();
@@ -154,6 +158,23 @@ rl.on("line", (line) => {
       }
       break;
     }
+    case "set_mode":
+      if (sdkSession && typeof sdkSession.setPermissionMode === "function") {
+        sdkSession
+          .setPermissionMode(String(cmd.mode || "default"))
+          .then(() => emit({ type: "mode", mode: String(cmd.mode || "default") }))
+          .catch((e) => emit({ type: "log", level: "warn", message: `set mode failed: ${e}` }));
+      }
+      break;
+    case "set_model":
+      if (sdkSession && typeof sdkSession.setModel === "function") {
+        const model = cmd.model ? String(cmd.model) : undefined;
+        sdkSession
+          .setModel(model)
+          .then(() => emit({ type: "model", model: model || null }))
+          .catch((e) => emit({ type: "log", level: "warn", message: `set model failed: ${e}` }));
+      }
+      break;
     case "shutdown":
       prompt.end();
       setTimeout(() => process.exit(0), 200);
@@ -198,6 +219,20 @@ async function main() {
 
   try {
     const session = query({ prompt, options });
+    sdkSession = session;
+    // Report the available models (best-effort) so the UI can offer an on-the-fly model switch, and
+    // echo the current mode/model so the dropdowns start in sync.
+    (async () => {
+      try {
+        if (typeof session.supportedModels === "function") {
+          emit({ type: "models", models: await session.supportedModels() });
+        }
+      } catch {
+        /* control method unavailable — ignore */
+      }
+    })();
+    emit({ type: "mode", mode: config.permissionMode || "default" });
+    emit({ type: "model", model: config.model || null });
     for await (const message of session) {
       detectRateLimit(message);
       if (message.type === "assistant" && message.message && Array.isArray(message.message.content)) {

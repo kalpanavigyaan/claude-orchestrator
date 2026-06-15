@@ -104,14 +104,32 @@ main { flex: 1; display: flex; min-height: 0; }
 .badge.idle { color: var(--accent); }
 .badge.error, .badge.ended { color: var(--red); }
 .badge.saved { color: var(--muted); }
-.session-item.past { opacity: .9; }
-.session-item.past .name { font-weight: 500; }
+
+/* Past-sessions tree */
+.tree-group { font-size: 12px; }
+.tree-summary { cursor: pointer; padding: 4px 6px; color: var(--muted); list-style: none; border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree-summary:hover { background: var(--panel-2); color: var(--text); }
+.tree-summary::-webkit-details-marker { display: none; }
+.tree-summary::before { content: "▸"; display: inline-block; width: 12px; font-size: 10px; transition: transform .15s; }
+details[open] > .tree-summary::before { transform: rotate(90deg); }
+.tree-leaf { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
+.tree-leaf:hover { background: var(--panel-2); }
+.tree-leaf.active { background: var(--panel-2); border: 1px solid var(--accent); }
+.tree-leaf .name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-leaf .badge { font-size: 10px; padding: 1px 6px; border-radius: 999px; background: var(--bg); }
+.tree-leaf .leaf-meta { margin-left: auto; font-size: 11px; color: var(--muted); }
 .session-item .sub { color: var(--muted); font-size: 11px; margin-top: 4px; word-break: break-all; }
 .session-item .timer { color: var(--amber); font-variant-numeric: tabular-nums; font-size: 12px; }
 
 .chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .chat-header { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 13px; }
-.chat-header .actions { float: right; display: flex; gap: 6px; }
+.chat-header .actions { float: right; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.hdr-select {
+  appearance: none; background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 9px; font-size: 12px;
+  min-height: 34px; max-width: 180px; cursor: pointer;
+}
+.hdr-select:hover { border-color: var(--accent); }
 .messages { flex: 1; overflow: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 
 .msg { max-width: 80%; padding: 9px 12px; border-radius: 12px; font-size: 14px; white-space: pre-wrap; word-break: break-word; }

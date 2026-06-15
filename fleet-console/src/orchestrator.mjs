@@ -71,6 +71,8 @@ let manualAccountReset = null;
 const accountUsage = new Map();
 let accountSubscription = null;
 let accountRateLimitsAvailable = false;
+/** Models the SDK reports as available (same across sessions); for the on-the-fly model switcher. */
+let availableModels = [];
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -145,6 +147,7 @@ function sessionSummary(s) {
     distro: s.distro || null,
     cwd: s.cwd,
     model: s.model || null,
+    permissionMode: s.permissionMode || "default",
     policy: s.policy,
     status: s.status,
     resetAt: s.resetAt,
@@ -211,6 +214,7 @@ function fleetSnapshot() {
       subscriptionType: accountSubscription,
       available: accountRateLimitsAvailable,
     },
+    models: availableModels,
     sessions: [...sessions.values()].map(sessionSummary),
   };
 }
@@ -836,6 +840,19 @@ function handleRunnerEvent(s, event) {
     case "tool_use":
       recordMessage(s, { role: "tool", name: event.name, input: event.input });
       break;
+    case "models":
+      if (Array.isArray(event.models)) {
+        availableModels = event.models;
+      }
+      break;
+    case "mode":
+      if (event.mode) {
+        s.permissionMode = event.mode;
+      }
+      break;
+    case "model":
+      s.model = event.model || null;
+      break;
     case "approval_request":
       s.pendingApprovals.set(event.id, { id: event.id, tool: event.tool, input: event.input, ts: now() });
       pushSessionEvent(s, { kind: "approval", approval: { id: event.id, tool: event.tool, input: event.input } });
@@ -1139,6 +1156,16 @@ const server = http.createServer(async (req, res) => {
         });
       }
       sendJson(res, 200, { ok: r.alive });
+    } else if (verb === "set-mode") {
+      const mode = String(body.mode || "default");
+      s.permissionMode = mode; // optimistic; runner echoes back a "mode" event on success
+      const ok = writeToRunner(s, { type: "set_mode", mode });
+      sendJson(res, 200, { ok });
+    } else if (verb === "set-model") {
+      const model = body.model ? String(body.model) : null;
+      s.model = model; // optimistic; runner echoes back a "model" event on success
+      const ok = writeToRunner(s, { type: "set_model", model });
+      sendJson(res, 200, { ok });
     } else if (verb === "restart") {
       // Bring the in-distro agent down cleanly (a SIGTERM to the wsl.exe relay would not reach it)
       // before respawning. Kill only the *captured* old child so a later respawn isn't affected.

@@ -469,16 +469,50 @@ function updateWorking() {
   workingEl.classList.remove("hidden");
 }
 
+const MODE_OPTIONS = [
+  { value: "default", label: "Default" },
+  { value: "plan", label: "Plan (read-only)" },
+  { value: "acceptEdits", label: "Auto-accept edits" },
+  { value: "bypassPermissions", label: "Full auto" },
+];
+
+let lastHeaderSig = null;
+
 function renderChatHeader(s) {
+  const models = (latest && latest.models) || [];
+  // Only rebuild when something visible changed — otherwise the <select>s would reset/close on
+  // every poll while the user is using them.
+  const sig = [s.id, s.status, s.permissionMode, s.model, models.length,
+    s.lastResult ? s.lastResult.cost : 0].join("|");
+  if (sig === lastHeaderSig) return;
+  lastHeaderSig = sig;
+
   const cost = s.lastResult ? " · $" + (s.lastResult.cost || 0).toFixed(4) : "";
+  const modeOpts = MODE_OPTIONS.map(
+    (m) => `<option value="${m.value}" ${m.value === (s.permissionMode || "default") ? "selected" : ""}>${escapeHtml(m.label)}</option>`
+  ).join("");
+  let modelOpts = `<option value="" ${!s.model ? "selected" : ""}>Model: default</option>`;
+  for (const m of models) {
+    modelOpts += `<option value="${escapeHtml(m.value)}" ${m.value === s.model ? "selected" : ""}>${escapeHtml(m.displayName || m.value)}</option>`;
+  }
   chatHeaderEl.innerHTML = `
     <span><strong>${escapeHtml(s.label)}</strong> — <span class="badge ${escapeHtml(s.status)}">${escapeHtml(s.status)}</span>${cost}</span>
     <span class="actions">
+      <select id="hdr-mode" class="hdr-select" title="Permission mode">${modeOpts}</select>
+      <select id="hdr-model" class="hdr-select" title="Model">${modelOpts}</select>
       <button id="hdr-instr">Instructions</button>
       <button id="hdr-restart">Restart</button>
       <button id="hdr-continue">Continue</button>
       <button id="hdr-stop">Stop</button>
     </span>`;
+  el("hdr-mode").addEventListener("change", async (e) => {
+    await api(`/api/sessions/${s.id}/set-mode`, { mode: e.target.value });
+    pollFleet();
+  });
+  el("hdr-model").addEventListener("change", async (e) => {
+    await api(`/api/sessions/${s.id}/set-model`, { model: e.target.value });
+    pollFleet();
+  });
   el("hdr-instr").addEventListener("click", () => openInstructions(s.id));
   el("hdr-restart").addEventListener("click", async () => {
     await api(`/api/sessions/${s.id}/restart`);
@@ -570,6 +604,7 @@ function selectSession(id) {
   if (sessionPollTimer) { clearInterval(sessionPollTimer); sessionPollTimer = null; }
   selectedId = id;
   viewingRel = null; // leaving any past-session view
+  lastHeaderSig = null; // force the header (mode/model selects) to rebuild for the new session
   messagesEl.innerHTML = "";
   renderedCount = 0;
   approvalQueue = [];
@@ -826,7 +861,43 @@ el("f-create").addEventListener("click", async () => {
 
 let viewingRel = null;
 
-/** List saved sessions in the sidebar (excluding ones currently live). Click to view read-only. */
+/** A clickable leaf for one saved session. */
+function treeLeaf(s) {
+  const item = document.createElement("div");
+  item.className = "tree-leaf" + (s.rel === viewingRel ? " active" : "");
+  item.innerHTML =
+    `<span class="name">${escapeHtml(s.title)}</span>` +
+    `<span class="badge ${escapeHtml(s.status || "")}">${escapeHtml(s.status || "saved")}</span>` +
+    `<span class="leaf-meta">${s.messages}</span>`;
+  item.addEventListener("click", () => viewPastSession(s.rel));
+  return item;
+}
+
+/** Build a collapsible <details> group for a tree level (object of children, or array of leaves). */
+function treeNode(label, node, depth) {
+  const details = document.createElement("details");
+  details.className = "tree-group";
+  details.open = depth < 2; // host/group expanded by default; repos collapsed
+  const summary = document.createElement("summary");
+  summary.className = "tree-summary";
+  summary.style.paddingLeft = 4 + depth * 10 + "px";
+  summary.textContent = label;
+  details.appendChild(summary);
+  if (Array.isArray(node)) {
+    for (const s of node) {
+      const leaf = treeLeaf(s);
+      leaf.style.paddingLeft = 8 + (depth + 1) * 10 + "px";
+      details.appendChild(leaf);
+    }
+  } else {
+    for (const k of Object.keys(node).sort()) {
+      details.appendChild(treeNode(k, node[k], depth + 1));
+    }
+  }
+  return details;
+}
+
+/** List saved sessions in the sidebar as a host/group/repo tree (excluding live ones). */
 async function renderHistorySidebar() {
   const listEl = el("history-list-side");
   if (!listEl) return;
@@ -842,15 +913,19 @@ async function renderHistorySidebar() {
     listEl.innerHTML = '<div class="muted-note" style="padding:4px 2px">none yet</div>';
     return;
   }
+  // Group into hostKind -> group -> repo -> [sessions].
+  const tree = {};
   for (const s of past) {
-    const item = document.createElement("div");
-    item.className = "session-item past" + (s.rel === viewingRel ? " active" : "");
-    item.innerHTML =
-      `<div class="row1"><span class="name">${escapeHtml(s.title)}</span>` +
-      `<span class="badge ${escapeHtml(s.status || "")}">${escapeHtml(s.status || "saved")}</span></div>` +
-      `<div class="sub">${escapeHtml(s.group)} · ${escapeHtml(s.repo)} · ${s.messages} msgs</div>`;
-    item.addEventListener("click", () => viewPastSession(s.rel));
-    listEl.appendChild(item);
+    const hk = s.hostKind || "?";
+    const g = s.group || "?";
+    const r = s.repo || "?";
+    tree[hk] = tree[hk] || {};
+    tree[hk][g] = tree[hk][g] || {};
+    tree[hk][g][r] = tree[hk][g][r] || [];
+    tree[hk][g][r].push(s);
+  }
+  for (const hk of Object.keys(tree).sort()) {
+    listEl.appendChild(treeNode(hk, tree[hk], 0));
   }
 }
 
