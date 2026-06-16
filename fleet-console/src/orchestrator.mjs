@@ -197,6 +197,7 @@ function sessionSummary(s) {
     effort: s.effort || null,
     thinking: s.thinking || "adaptive",
     browser: !!s.browser,
+    toolServer: s.toolServer != null ? !!s.toolServer : !!(s.runnerConfig && s.runnerConfig.toolServerUrl),
     policy: s.policy,
     status: s.status,
     resetAt: s.resetAt,
@@ -274,6 +275,7 @@ function fleetSnapshot() {
     },
     models: availableModels,
     commands: availableCommands,
+    toolServer: { enabled: TOOL_SERVER_ENABLED, port: TOOL_SERVER_PORT },
     sessions: [...sessions.values()].map(sessionSummary),
   };
 }
@@ -806,11 +808,15 @@ function createSession(spec) {
   const host = spec.host === "wsl" ? "wsl" : "local";
   const label = spec.label || spec.cwd || id;
 
-  // For a WSL session, use the in-distro node + staged runner recorded by setup-wsl-distro.ps1
-  // (the agent must run inside the distro with the Linux Agent SDK). Fall back to defaults.
+  // For a WSL session, use the in-distro node + claude binary recorded by setup-wsl-distro.ps1.
+  // runner.mjs is served from the Windows host via /mnt/ — no per-distro copy needed.
   const wslReg = host === "wsl" ? loadWslRunners()[spec.distro] || null : null;
   const runnerPath = spec.runnerPath || (wslReg && wslReg.runnerPath) || null;
   const nodeBin = spec.node || (wslReg && wslReg.node) || null;
+  // pathToClaudeCodeExecutable: the Linux claude binary inside the distro. Required when the SDK
+  // package was installed on Windows (only has the win32 binary); the Linux runner needs the path
+  // to the linux-x64 claude binary that's installed in the distro via npm install -g claude-code.
+  const claudePath = spec.claudePath || (wslReg && wslReg.claude) || null;
 
   // Organize like VS Code: <root>/<WSL|Windows>/<distro-or-host>/<repo>/<title>/, each session
   // folder holding session.json + conversation.md + an instructions/ subfolder. The title is
@@ -861,6 +867,7 @@ function createSession(spec) {
     effort,
     thinking,
     toolServerUrl: toolServerUrl(host),
+    claudePath: claudePath || undefined,
     // Resume a saved conversation: by SDK session id when known, else continue the most recent
     // conversation in this cwd (covers sessions created before ids were captured).
     resume: spec.resume || undefined,
@@ -893,6 +900,7 @@ function createSession(spec) {
     sessionDir,
     instructionsDir,
     agentInstructionsDir,
+    claudePath: claudePath || null,
     sdkSessionId: spec.sdkSessionId || null,
     messages: Array.isArray(spec.preload) ? spec.preload : [],
     pendingApprovals: new Map(),
@@ -1120,6 +1128,9 @@ function handleRunnerEvent(s, event) {
       break;
     case "browser":
       s.browser = !!event.enabled;
+      break;
+    case "tool_server":
+      s.toolServer = !!event.enabled;
       break;
     case "effort":
       s.effort = event.effort || null;
@@ -1525,6 +1536,13 @@ const server = http.createServer(async (req, res) => {
       const enabled = !!body.enabled;
       s.browser = enabled; // optimistic
       const ok = writeToRunner(s, { type: "set_browser", enabled });
+      sendJson(res, 200, { ok });
+    } else if (verb === "set-tool-server") {
+      // Attach/detach the central code-intelligence tool server (runner echoes "tool_server").
+      // Only meaningful when toolServer is globally enabled in config.
+      const enabled = !!body.enabled;
+      s.toolServer = enabled; // optimistic
+      const ok = writeToRunner(s, { type: "set_tool_server", enabled });
       sendJson(res, 200, { ok });
     } else if (verb === "set-model") {
       const model = body.model ? String(body.model) : null;

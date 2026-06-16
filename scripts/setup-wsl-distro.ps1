@@ -75,7 +75,12 @@ echo ">> node: $NODE_BIN ($(node -v))"
 echo ">> Installing the claude CLI for login..."
 npm install -g @anthropic-ai/claude-code --no-fund --no-audit >/dev/null 2>&1 || true
 
+# Resolve claude binary path (same bin dir as node)
+CLAUDE_BIN="$(dirname $NODE_BIN)/claude"
+[ -x "$CLAUDE_BIN" ] || CLAUDE_BIN=""
+
 echo "FLEET_NODE=$NODE_BIN"
+echo "FLEET_CLAUDE=$CLAUDE_BIN"
 '@
 
 $tmp = Join-Path $env:TEMP ("fleet-setup-{0}.sh" -f ([System.Guid]::NewGuid().ToString("N")))
@@ -86,27 +91,30 @@ Write-Host "Setting up '$Distro' for fleet-console (node + claude CLI only)..." 
 $out = & wsl.exe -d $Distro -- bash $tmpMnt 2>&1 | Tee-Object -Variable shown
 Remove-Item $tmp -ErrorAction SilentlyContinue
 
-$nodeLine = ($out | Select-String '^FLEET_NODE=' | Select-Object -Last 1)
+$nodeLine   = ($out | Select-String '^FLEET_NODE='   | Select-Object -Last 1)
+$claudeLine = ($out | Select-String '^FLEET_CLAUDE=' | Select-Object -Last 1)
 if (-not $nodeLine) {
     throw "Setup did not finish (no FLEET_NODE marker). See output above."
 }
-$nodePath = ($nodeLine.Line) -replace '^FLEET_NODE=', ''
+$nodePath   = ($nodeLine.Line)   -replace '^FLEET_NODE=',   ''
+$claudePath = if ($claudeLine) { ($claudeLine.Line) -replace '^FLEET_CLAUDE=', '' } else { '' }
 
-# Record only the node path — runnerPath is omitted so hosts.mjs uses the /mnt/ path automatically.
+# Record node path (and claude path if found) — runnerPath is omitted so hosts.mjs uses the /mnt/ path automatically.
 $mapFile = Join-Path $FleetDir "wsl-runners.json"
 $map = @{}
 if (Test-Path $mapFile) {
     try { $map = Get-Content $mapFile -Raw | ConvertFrom-Json -AsHashtable } catch { $map = @{} }
 }
 if ($null -eq $map) { $map = @{} }
-# Preserve any existing keys for this distro, then update node; drop runnerPath.
-if (-not $map.ContainsKey($Distro)) { $map[$Distro] = @{} }
-$map[$Distro] = @{ node = $nodePath }
+$entry = @{ node = $nodePath }
+if ($claudePath) { $entry.claude = $claudePath }
+$map[$Distro] = $entry
 ($map | ConvertTo-Json -Depth 5) | Set-Content $mapFile -Encoding utf8
 
 Write-Host ""
 Write-Host "Recorded '$Distro':" -ForegroundColor Green
-Write-Host "  node = $nodePath"
+Write-Host "  node   = $nodePath"
+if ($claudePath) { Write-Host "  claude = $claudePath" } else { Write-Warning "  claude binary not found — run 'claude' inside the distro after login" }
 Write-Host "  runner.mjs served from Windows host via /mnt/ (no copy needed)"
 Write-Host ""
 Write-Host "One-time final step — log Claude in INSIDE the distro:" -ForegroundColor Cyan

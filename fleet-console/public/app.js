@@ -655,7 +655,7 @@ function renderControls(s) {
   const models = (latest && latest.models) || [];
   // Stable signature so the inputs don't reset on every poll; covers all three states.
   const sig = s
-    ? "live|" + [s.id, s.status, s.mode, s.model, models.length, s.effort || "", s.thinking || "", s.browser ? 1 : 0, s.autoContinue === false ? 0 : 1].join("|")
+    ? "live|" + [s.id, s.status, s.mode, s.model, models.length, s.effort || "", s.thinking || "", s.browser ? 1 : 0, s.toolServer ? 1 : 0, s.autoContinue === false ? 0 : 1].join("|")
     : viewingRel
       ? "past|" + viewingRel
       : "none";
@@ -705,7 +705,10 @@ function renderControls(s) {
        <select id="ctl-thinking" class="hdr-select">${thinkingOpts}</select>
        <label class="rb-label">🌐 Browser (UI testing)</label>
        <label class="rb-check"><input type="checkbox" id="ctl-browser" ${s.browser ? "checked" : ""}/> Enable Playwright browser tools</label>
-       <div class="rb-note">Lets Claude navigate, click, type & screenshot a real browser. First use may take a few seconds to start.</div>
+       <div class="rb-note">Lets Claude navigate, click, type &amp; screenshot a real browser. First use may take a few seconds to start.</div>
+       <label class="rb-label">🧰 Code Intelligence Tools</label>
+       <label class="rb-check"><input type="checkbox" id="ctl-toolserver" ${s.toolServer ? "checked" : ""} ${latest && latest.toolServer && latest.toolServer.enabled ? "" : "disabled"}/> Enable tool server (RTK · Chunkhound · Graphify · Cavemem · SSE · DHL · LIC + more)</label>
+       <div class="rb-note">${latest && latest.toolServer && latest.toolServer.enabled ? "26 code-intelligence tools served centrally — no per-distro install. Run scripts/start-tool-server.ps1 first." : "Tool server not enabled in config. Set toolServer.enabled: true in config/config.yaml and run scripts/start-tool-server.ps1."}</div>
        <label class="rb-label">♻ Auto-continue</label>
        <label class="rb-check"><input type="checkbox" id="ctl-autocontinue" ${s.autoContinue === false ? "" : "checked"}/> Auto-continue after the 5-hour reset</label>
        <div class="rb-note">When on, this session runs a turn unattended after each usage reset — that spends tokens on its own. Turn off to make it wait for you.</div>
@@ -721,6 +724,12 @@ function renderControls(s) {
     await api(`/api/sessions/${s.id}/set-browser`, { enabled: e.target.checked });
     pollFleet();
   });
+  if (el("ctl-toolserver")) {
+    el("ctl-toolserver").addEventListener("change", async (e) => {
+      await api(`/api/sessions/${s.id}/set-tool-server`, { enabled: e.target.checked });
+      pollFleet();
+    });
+  }
   el("ctl-autocontinue").addEventListener("change", async (e) => {
     await api(`/api/sessions/${s.id}/auto-continue`, { enabled: e.target.checked });
     pollFleet();

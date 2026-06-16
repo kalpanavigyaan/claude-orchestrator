@@ -84,6 +84,9 @@ function toolCategory(name) {
 // has no display). Loading is non-blocking (SDK default): the first browser use may pause a moment
 // while `npx` fetches @playwright/mcp on a cold start; Claude finds the tools via tool search.
 let browserEnabled = !!config.browser;
+// Central tool server: 26 code-intelligence tools (RTK, Chunkhound, Graphify, Cavemem, SSE, etc.)
+// served from Windows host via MCP HTTP. Toggled per-session from the Controls tab.
+let toolServerEnabled = !!config.toolServerUrl;
 function browserServers() {
   const servers = {};
 
@@ -100,7 +103,7 @@ function browserServers() {
   // Central tool server (RTK, Chunkhound, Graphify, Cavemem, SSE, etc.)
   // Served from Windows host; WSL runners connect via Windows host IP injected into toolServerUrl.
   const toolUrl = config.toolServerUrl;
-  if (toolUrl) {
+  if (toolServerEnabled && toolUrl) {
     servers.toolServer = { url: toolUrl };
   }
 
@@ -280,6 +283,18 @@ rl.on("line", (line) => {
         emit({ type: "browser", enabled: browserEnabled });
       }
       break;
+    case "set_tool_server":
+      // Attach/detach the central code-intelligence tool server mid-session.
+      toolServerEnabled = !!cmd.enabled;
+      if (sdkSession && typeof sdkSession.setMcpServers === "function") {
+        sdkSession
+          .setMcpServers(browserServers())
+          .then(() => emit({ type: "tool_server", enabled: toolServerEnabled }))
+          .catch((e) => emit({ type: "log", level: "warn", message: `set tool server failed: ${e}` }));
+      } else {
+        emit({ type: "tool_server", enabled: toolServerEnabled });
+      }
+      break;
     case "set_mode": {
       const mode = String(cmd.mode || "default");
       currentMode = mode; // SDK plan vs default
@@ -378,9 +393,16 @@ async function main() {
   // categories the user toggled (and read-only tools) and prompts for the rest. This is what makes
   // "auto-approve shell" actually let Bash/git run (the SDK's permissionMode only covers edits).
   options.canUseTool = canUseTool;
-  // Attach the browser toolset if this session opted in (see browserServers).
-  if (browserEnabled) {
-    options.mcpServers = browserServers();
+  // Attach MCP servers: browser toolset (if opted in) and/or central tool server.
+  // Always call browserServers() — it returns only the enabled entries.
+  const mcpServers = browserServers();
+  if (Object.keys(mcpServers).length > 0) {
+    options.mcpServers = mcpServers;
+  }
+  // Point the SDK at the Linux claude binary inside the distro. Without this, when runner.mjs is
+  // loaded from /mnt/ (Windows filesystem), the SDK cannot find its linux-x64 native binary.
+  if (config.claudePath) {
+    options.pathToClaudeCodeExecutable = config.claudePath;
   }
   // Resume a saved conversation: by session id when known, else continue the most recent
   // conversation in this cwd (mutually exclusive).
@@ -415,8 +437,7 @@ async function main() {
     emit({ type: "mode", mode: config.permissionMode || "default" });
     emit({ type: "model", model: config.model || null });
     emit({ type: "auto_approve", categories: [...autoApprove] });
-    emit({ type: "browser", enabled: browserEnabled });
-    emit({ type: "effort", effort: currentEffort });
+    emit({ type: "browser", enabled: browserEnabled });  emit({ type: "tool_server", enabled: toolServerEnabled });    emit({ type: "effort", effort: currentEffort });
     emit({ type: "thinking", thinking: currentThinking });
     let lastSessionId = null;
     for await (const message of session) {

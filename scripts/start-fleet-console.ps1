@@ -86,28 +86,20 @@ if ($pids) {
     Write-Host "No existing instance on port $Port."
 }
 
-# 2) Re-stage the runner into each registered WSL distro so WSL sessions run the latest code.
+# 2) runner.mjs is served from the Windows host via /mnt/ — no per-distro restaging needed.
+#    (setup-wsl-distro.ps1 records only the node + claude paths, not a runner copy)
 $mapFile = Join-Path $FleetDirectory "wsl-runners.json"
 if (-not $NoRestage -and (Test-Path $mapFile)) {
-    $fcMnt = ConvertTo-Mnt $FleetDirectory
-    try {
-        $map = Get-Content $mapFile -Raw | ConvertFrom-Json
-    } catch {
-        $map = $null
-    }
+    try { $map = Get-Content $mapFile -Raw | ConvertFrom-Json } catch { $map = $null }
     if ($map) {
+        $hasLegacy = $false
         foreach ($prop in $map.PSObject.Properties) {
-            $distro = $prop.Name
-            $runnerPath = $prop.Value.runnerPath
-            if (-not $runnerPath) { continue }
-            $destDir = ($runnerPath -replace '/[^/]+$', '')
-            $cmd = "mkdir -p '$destDir' && cp '$fcMnt/src/runner.mjs' '$destDir/runner.mjs' && cp '$fcMnt/src/asyncQueue.mjs' '$destDir/asyncQueue.mjs' && echo staged"
-            $out = (& wsl.exe -d $distro -- bash -lc $cmd) 2>&1
-            if ($LASTEXITCODE -eq 0 -and ($out -match "staged")) {
-                Write-Host "Refreshed runner in '$distro'." -ForegroundColor Green
-            } else {
-                Write-Warning "Could not refresh runner in '$distro' (distro stopped or not set up): $out"
-            }
+            if ($prop.Value.runnerPath) { $hasLegacy = $true; break }
+        }
+        if ($hasLegacy) {
+            Write-Warning "wsl-runners.json has legacy runnerPath entries. Re-run setup-wsl-distro.ps1 per distro to upgrade."
+        } else {
+            Write-Host "runner.mjs served from /mnt/ — no restaging needed." -ForegroundColor DarkGray
         }
     }
 }
