@@ -815,38 +815,37 @@ function selectSession(id) {
   }
 }
 
-// Serialize syncs: the 1.5s poll and the SSE event both call syncSession, and renderedCount is
-// read before the await and written after — two overlapping calls would append the same new
-// messages (the "duplicate response" bug). Run one at a time; coalesce any call made mid-flight.
-let syncing = false;
-let syncQueued = false;
+// The 1.5s poll and the SSE event both call syncSession. We use a generation counter instead of a
+// boolean lock: every call bumps syncGen, and a response is applied only if it's still the latest
+// request. This drops stale out-of-order responses (so an older snapshot can't clobber the view)
+// AND can never wedge — a stalled fetch just becomes stale when the next poll fires, so live
+// updates keep flowing (a boolean "in-flight" lock here would freeze the chat until a page reload
+// if a single request ever hung). renderedCount advances per appended item, so re-entrant calls are
+// idempotent. The duplicate-response bug is handled in appendMessage (assistant-vs-result skip).
+let syncGen = 0;
 async function syncSession(id) {
   if (id !== selectedId) return;
-  if (syncing) {
-    syncQueued = true;
-    return;
+  const gen = ++syncGen;
+  const d = await getJson(`/api/sessions/${id}`);
+  if (gen !== syncGen) return; // a newer sync started/finished — ignore this stale response
+  if (id !== selectedId || !d || !Array.isArray(d.messages)) return;
+  if (d.messages.length < renderedCount) {
+    messagesEl.innerHTML = "";
+    renderedCount = 0;
   }
-  syncing = true;
-  try {
-    const d = await getJson(`/api/sessions/${id}`);
-    if (id !== selectedId || !d || !Array.isArray(d.messages)) return;
-    if (d.messages.length < renderedCount) {
-      messagesEl.innerHTML = "";
-      renderedCount = 0;
+  while (renderedCount < d.messages.length) {
+    const m = d.messages[renderedCount];
+    renderedCount++; // advance first so one bad message can't wedge the loop
+    try {
+      appendMessage(m);
+    } catch (e) {
+      console.error("appendMessage failed", e);
     }
-    for (let i = renderedCount; i < d.messages.length; i++) appendMessage(d.messages[i]);
-    renderedCount = d.messages.length;
-    for (const a of d.pendingApprovals || []) {
-      if (!seenApprovalIds.has(a.id)) {
-        seenApprovalIds.add(a.id);
-        enqueueApproval(a);
-      }
-    }
-  } finally {
-    syncing = false;
-    if (syncQueued && selectedId) {
-      syncQueued = false;
-      syncSession(selectedId);
+  }
+  for (const a of d.pendingApprovals || []) {
+    if (!seenApprovalIds.has(a.id)) {
+      seenApprovalIds.add(a.id);
+      enqueueApproval(a);
     }
   }
 }

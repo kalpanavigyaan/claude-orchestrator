@@ -271,11 +271,11 @@ details[open] > .tree-summary::before { transform: rotate(90deg); }
 @keyframes sbpulse { 0%, 100% { opacity: .35; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.15); } }
 .composer textarea:disabled { opacity: .5; cursor: not-allowed; }
 
-.composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
+.composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); align-items: flex-end; }
 .composer textarea {
-  flex: 1; resize: none; background: var(--panel-2); color: var(--text);
+  flex: 1; resize: vertical; min-height: 92px; max-height: 60vh; background: var(--panel-2); color: var(--text);
   border: 1px solid var(--border); border-radius: 10px; padding: 10px; font-size: 14px;
-  font-family: inherit;
+  font-family: inherit; line-height: 1.45;
 }
 
 .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 50; }
