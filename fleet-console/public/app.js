@@ -11,7 +11,7 @@
 
 // Must match orchestrator BUILD. If the server reports a different build, this page is running a
 // stale cached app.js — we show a banner so it's never a silent mystery. Bump both on UI changes.
-const APP_BUILD = "2026-06-16b";
+const APP_BUILD = "2026-06-16c";
 
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
 const tokenQuery = TOKEN ? `?token=${encodeURIComponent(TOKEN)}` : "";
@@ -40,6 +40,7 @@ const cmdbarEl = el("cmdbar");
 const cmdListEl = el("cmd-list");
 const cmdFilterEl = el("cmd-filter");
 const rbControlsEl = el("rb-controls");
+const rbIntelligenceEl = el("rb-intelligence");
 
 function api(path, body) {
   return fetch(path, {
@@ -374,6 +375,7 @@ function fmtTokens(n) {
 function renderUsage() {
   if (!usageBarEl) return;
   const u = latest && latest.usage;
+  const fetching = !!(u && u.fetching);
   const totals = (u && u.totals) || { costUsd: 0, inputTokens: 0, outputTokens: 0 };
   const windows = ((u && u.windows) || [])
     .slice()
@@ -383,6 +385,19 @@ function renderUsage() {
       return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
     });
   const hasTotals = totals.costUsd > 0 || totals.inputTokens > 0 || totals.outputTokens > 0;
+
+  // Show a loading skeleton while the usage-fetcher is running and we have no data yet.
+  if (fetching && !windows.length) {
+    usageBarEl.classList.remove("hidden");
+    usageBarEl.innerHTML =
+      `<div class="usage-card usage-loading">
+        <div class="uc-head"><span class="uc-title">Fetching account usage…</span><span class="uc-spinner"></span></div>
+        <div class="uc-bar"><div class="uc-fill loading" style="width:100%"></div></div>
+        <div class="uc-meta"><span class="usage-loading-note">Connecting to Claude API to read usage limits</span></div>
+      </div>`;
+    return;
+  }
+
   if (!windows.length && !hasTotals) {
     usageBarEl.classList.add("hidden");
     usageBarEl.innerHTML = "";
@@ -411,9 +426,10 @@ function renderUsage() {
   const nSessions = (latest && latest.sessions ? latest.sessions.length : 0);
   const plan = u && u.subscriptionType ? ` · ${escapeHtml(String(u.subscriptionType))} plan` : "";
   const cached = totals.cacheReadTokens || 0;
+  const refreshing = fetching ? ` <span class="uc-refreshing" title="Refreshing usage data…">↻</span>` : "";
   html +=
     `<div class="usage-card totals">
-      <div class="uc-head"><span class="uc-title">This run${plan}</span></div>
+      <div class="uc-head"><span class="uc-title">This run${plan}</span>${refreshing}</div>
       <div class="uc-big">$${(totals.costUsd || 0).toFixed(4)}</div>
       <div class="uc-sub">${fmtTokens(totals.inputTokens)} in · ${fmtTokens(totals.outputTokens)} out${cached ? " · " + fmtTokens(cached) + " cached" : ""} · ${nSessions} session${nSessions === 1 ? "" : "s"}</div>
     </div>`;
@@ -545,14 +561,22 @@ function renderStatusBar() {
   }
   // Account usage on the right — always visible while connected (fetched at startup, refreshed each poll).
   if (sbUsageEl) {
-    const w = (latest.usage && latest.usage.windows) || [];
+    const u = latest.usage || {};
+    const fetching = !!u.fetching;
+    const w = u.windows || [];
     const fh = w.find((x) => x.type === "five_hour");
     const sd = w.find((x) => x.type === "seven_day");
     const parts = [];
     if (fh && typeof fh.utilization === "number") parts.push(`5h ${fh.utilization}%`);
     if (sd && typeof sd.utilization === "number") parts.push(`wk ${sd.utilization}%`);
-    const plan = latest.usage && latest.usage.subscriptionType ? latest.usage.subscriptionType : "";
-    sbUsageEl.textContent = parts.length ? (plan ? plan + " · " : "") + parts.join(" · ") : "account usage…";
+    const plan = u.subscriptionType ? u.subscriptionType : "";
+    if (parts.length) {
+      sbUsageEl.textContent = (plan ? plan + " · " : "") + parts.join(" · ");
+      sbUsageEl.removeAttribute("data-loading");
+    } else {
+      sbUsageEl.textContent = fetching ? "fetching account usage…" : "account usage unavailable";
+      sbUsageEl.dataset.loading = fetching ? "1" : "";
+    }
   }
   // Viewing a saved session (read-only).
   if (viewingRel && !selectedId) {
@@ -655,7 +679,7 @@ function renderControls(s) {
   const models = (latest && latest.models) || [];
   // Stable signature so the inputs don't reset on every poll; covers all three states.
   const sig = s
-    ? "live|" + [s.id, s.status, s.mode, s.model, models.length, s.effort || "", s.thinking || "", s.browser ? 1 : 0, s.toolServer ? 1 : 0, s.autoContinue === false ? 0 : 1].join("|")
+    ? "live|" + [s.id, s.status, s.mode, s.model, models.length, s.effort || "", s.thinking || "", s.browser ? 1 : 0, s.autoContinue === false ? 0 : 1].join("|")
     : viewingRel
       ? "past|" + viewingRel
       : "none";
@@ -706,9 +730,6 @@ function renderControls(s) {
        <label class="rb-label">🌐 Browser (UI testing)</label>
        <label class="rb-check"><input type="checkbox" id="ctl-browser" ${s.browser ? "checked" : ""}/> Enable Playwright browser tools</label>
        <div class="rb-note">Lets Claude navigate, click, type &amp; screenshot a real browser. First use may take a few seconds to start.</div>
-       <label class="rb-label">🧰 Code Intelligence Tools</label>
-       <label class="rb-check"><input type="checkbox" id="ctl-toolserver" ${s.toolServer ? "checked" : ""} ${latest && latest.toolServer && latest.toolServer.enabled ? "" : "disabled"}/> Enable tool server (RTK · Chunkhound · Graphify · Cavemem · SSE · DHL · LIC + more)</label>
-       <div class="rb-note">${latest && latest.toolServer && latest.toolServer.enabled ? "26 code-intelligence tools served centrally — no per-distro install. Run scripts/start-tool-server.ps1 first." : "Tool server not enabled in config. Set toolServer.enabled: true in config/config.yaml and run scripts/start-tool-server.ps1."}</div>
        <label class="rb-label">♻ Auto-continue</label>
        <label class="rb-check"><input type="checkbox" id="ctl-autocontinue" ${s.autoContinue === false ? "" : "checked"}/> Auto-continue after the 5-hour reset</label>
        <div class="rb-note">When on, this session runs a turn unattended after each usage reset — that spends tokens on its own. Turn off to make it wait for you.</div>
@@ -724,12 +745,6 @@ function renderControls(s) {
     await api(`/api/sessions/${s.id}/set-browser`, { enabled: e.target.checked });
     pollFleet();
   });
-  if (el("ctl-toolserver")) {
-    el("ctl-toolserver").addEventListener("change", async (e) => {
-      await api(`/api/sessions/${s.id}/set-tool-server`, { enabled: e.target.checked });
-      pollFleet();
-    });
-  }
   el("ctl-autocontinue").addEventListener("change", async (e) => {
     await api(`/api/sessions/${s.id}/auto-continue`, { enabled: e.target.checked });
     pollFleet();
@@ -1553,6 +1568,119 @@ async function viewPastSession(rel) {
 // ---- slash commands panel --------------------------------------------------
 
 /** Render the available slash commands (filtered) into the right-side panel. */
+// ---------------------------------------------------------------------------
+// Intelligence tab — 26 code-intelligence tools, per-session toggles
+// ---------------------------------------------------------------------------
+
+const INTELLIGENCE_TOOLS = [
+  // Token tools
+  { id: "rtk",           group: "Token",   label: "RTK",              desc: "Reduced Token Kernel — greedy-select chunks within a token budget by relevance density" },
+  { id: "tds",           group: "Token",   label: "TDS",              desc: "Token Diff Slicer — extract unified diff hunks with token counts" },
+  { id: "noise_filter",  group: "Token",   label: "Noise Filter",     desc: "Strip shebangs, auto-gen headers and redundant blanks from source" },
+  { id: "budget",        group: "Token",   label: "Context Budgeter", desc: "Fractional-knapsack packing of context items by priority within a token budget" },
+  { id: "cog",           group: "Token",   label: "COG",              desc: "Claude Output Governor — truncate output at a sentence/paragraph/line boundary" },
+  // Log tools
+  { id: "log_dedup",     group: "Logs",    label: "Log Deduper",      desc: "Replace numbers/UUIDs/hashes with placeholders; group identical log templates" },
+  { id: "stack_collapse",group: "Logs",    label: "Stack Collapse",   desc: "Keep head + tail + app frames; collapse stdlib/vendor middle frames" },
+  { id: "log_classify",  group: "Logs",    label: "LIC",              desc: "Log-Intent Classifier — label lines: failure / degraded / normal / verbose" },
+  { id: "trace_minimize",group: "Logs",    label: "ETM",              desc: "Execution-Trace Minimizer — collapse cold paths below a time threshold" },
+  // Memory
+  { id: "mem_set",       group: "Memory",  label: "Cavemem Set",      desc: "Store a value in the central persistent key-value store with optional TTL" },
+  { id: "mem_get",       group: "Memory",  label: "Cavemem Get",      desc: "Retrieve a stored Cavemem value" },
+  { id: "mem_list",      group: "Memory",  label: "Cavemem List",     desc: "List all keys in a Cavemem namespace" },
+  { id: "mem_delete",    group: "Memory",  label: "Cavemem Delete",   desc: "Delete a Cavemem key" },
+  // AST tools
+  { id: "chunkhound",    group: "AST",     label: "Chunkhound",       desc: "Walk AST and emit function/class/method chunk boundaries" },
+  { id: "region_extract",group: "AST",     label: "Region Extractor", desc: "Find the AST node enclosing a symbol name or line number" },
+  { id: "symbol_scope",  group: "AST",     label: "SSE",              desc: "Symbol-Scoped Extractor — definition + all usages across search roots" },
+  { id: "ast_horizon",   group: "AST",     label: "AST Horizon",      desc: "Keep AST subtrees reachable from seed symbol within depth N" },
+  { id: "safr",          group: "AST",     label: "SAFR",             desc: "Semantic-Aware File Router — detect language and recommend tool chain" },
+  // Graph tools
+  { id: "graphify",      group: "Graph",   label: "Graphify",         desc: "Build import/call graph from a seed file and BFS-slice to depth N" },
+  { id: "import_prune",  group: "Graph",   label: "Import Pruner",    desc: "Return only import nodes reachable within horizon depth" },
+  { id: "dhl",           group: "Graph",   label: "DHL",              desc: "Dependency Horizon Limiter — BFS prune any dependency graph" },
+  // Embeddings (Phase 4)
+  { id: "rlec_cache",    group: "Embed",   label: "RLEC Cache",       desc: "Embed and cache repo/file chunks into the central semantic index" },
+  { id: "rlec_search",   group: "Embed",   label: "RLEC Search",      desc: "Semantic search over a cached namespace — return top-k relevant chunks" },
+  { id: "semantic_dedupe",group:"Embed",   label: "Semantic Deduper", desc: "Cluster texts by cosine similarity; keep one representative per cluster" },
+  { id: "context_rank",  group: "Embed",   label: "Context Ranker",   desc: "Score and rank candidate chunks against a query embedding" },
+  { id: "embed",         group: "Embed",   label: "Embed",            desc: "Compute raw embedding vectors for a list of texts" },
+];
+
+const TOOL_GROUPS = ["Token", "Logs", "Memory", "AST", "Graph", "Embed"];
+
+let lastIntelSig = null;
+
+function renderIntelligence() {
+  if (!rbIntelligenceEl) return;
+  const s = latest && selectedId ? latest.sessions.find((x) => x.id === selectedId) : null;
+  const tsEnabled = !!(latest && latest.toolServer && latest.toolServer.enabled);
+  const sessionOn = !!(s && s.toolServer);
+  // Use a stable sig so checkboxes don't reset on every fleet poll tick
+  const sig = [tsEnabled ? 1 : 0, sessionOn ? 1 : 0, s ? s.id : "none", s ? s.status : ""].join("|");
+  if (sig === lastIntelSig) return;
+  lastIntelSig = sig;
+
+  if (!tsEnabled) {
+    rbIntelligenceEl.innerHTML =
+      `<div class="intel-banner intel-off">
+        <div class="intel-banner-title">🧰 Tool Server not enabled</div>
+        <div class="rb-note">Set <code>toolServer.enabled: true</code> in <code>config/config.yaml</code>, then run:<br><code>scripts\\start-tool-server.ps1</code></div>
+       </div>`;
+    return;
+  }
+
+  const masterChecked = sessionOn ? "checked" : "";
+  const masterDisabled = s ? "" : "disabled";
+  let html =
+    `<div class="intel-master rb-section">
+       <label class="rb-check">
+         <input type="checkbox" id="intel-master" ${masterChecked} ${masterDisabled}/>
+         <strong>Enable all tools for this session</strong>
+       </label>
+       <div class="rb-note">Attaches the tool server MCP to the active session so Claude can call all 26 tools directly.</div>
+     </div>`;
+
+  for (const group of TOOL_GROUPS) {
+    const tools = INTELLIGENCE_TOOLS.filter((t) => t.group === group);
+    html += `<div class="intel-group rb-section"><div class="intel-group-title rb-label">${group}</div>`;
+    for (const tool of tools) {
+      html +=
+        `<label class="rb-check intel-tool" title="${escapeHtml(tool.desc)}">
+           <input type="checkbox" class="intel-tool-cb" data-tool="${escapeHtml(tool.id)}" ${sessionOn ? "checked" : ""} ${masterDisabled}/>
+           <span class="intel-tool-label">${escapeHtml(tool.label)}</span>
+           <span class="intel-tool-desc">${escapeHtml(tool.desc)}</span>
+         </label>`;
+    }
+    html += `</div>`;
+  }
+
+  rbIntelligenceEl.innerHTML = html;
+
+  // Master toggle — enable/disable the tool server for the session
+  const masterEl = document.getElementById("intel-master");
+  if (masterEl && s) {
+    masterEl.addEventListener("change", async (e) => {
+      await api(`/api/sessions/${s.id}/set-tool-server`, { enabled: e.target.checked });
+      lastIntelSig = null; // force re-render
+      pollFleet();
+    });
+  }
+
+  // Individual tool checkboxes — currently they track state locally (visual only) since per-tool
+  // enable/disable requires the tool server to support a tool manifest filter endpoint in a future
+  // release. Checking/unchecking still gives the user a clear map of what's available.
+  for (const cb of rbIntelligenceEl.querySelectorAll(".intel-tool-cb")) {
+    cb.addEventListener("change", () => {
+      // Sync master checkbox: checked if ALL tools are checked
+      const all = rbIntelligenceEl.querySelectorAll(".intel-tool-cb");
+      const checked = rbIntelligenceEl.querySelectorAll(".intel-tool-cb:checked");
+      if (masterEl) masterEl.indeterminate = checked.length > 0 && checked.length < all.length;
+      if (masterEl) masterEl.checked = checked.length === all.length;
+    });
+  }
+}
+
 function renderCommands() {
   if (!cmdListEl) return;
   const cmds = (latest && latest.commands) || [];

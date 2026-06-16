@@ -260,7 +260,7 @@ function applyUsageReport(report) {
 
 // Bump on any public/ UI change. The client compares its own APP_BUILD to this and shows a
 // "you're running an old version, refresh" banner on mismatch — ends the "is my page stale?" guessing.
-const BUILD = "2026-06-16b";
+const BUILD = "2026-06-16c";
 
 function fleetSnapshot() {
   return {
@@ -272,6 +272,7 @@ function fleetSnapshot() {
       totals: aggregateUsage(),
       subscriptionType: accountSubscription,
       available: accountRateLimitsAvailable,
+      fetching: usageFetchInFlight,
     },
     models: availableModels,
     commands: availableCommands,
@@ -1655,6 +1656,7 @@ function usageTick() {
     return;
   }
   usageFetchInFlight = true;
+  broadcastFleet(); // tell the browser we started fetching
   let child;
   try {
     child = spawn(process.execPath, [USAGE_FETCHER_PATH], {
@@ -1664,6 +1666,7 @@ function usageTick() {
     });
   } catch {
     usageFetchInFlight = false;
+    broadcastFleet();
     return;
   }
   let buf = "";
@@ -1672,6 +1675,7 @@ function usageTick() {
   });
   child.on("error", () => {
     usageFetchInFlight = false;
+    broadcastFleet();
   });
   child.on("exit", () => {
     usageFetchInFlight = false;
@@ -1684,12 +1688,12 @@ function usageTick() {
         const event = JSON.parse(text);
         if (event.type === "usage_report") {
           applyUsageReport(event.report);
-          broadcastFleet();
         }
       } catch {
         /* ignore non-JSON */
       }
     }
+    broadcastFleet(); // push updated usage + fetching:false together
   });
 }
 
