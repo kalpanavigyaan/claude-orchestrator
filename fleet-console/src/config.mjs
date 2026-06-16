@@ -22,6 +22,8 @@ const DEFAULTS = {
   repos: { localRoots: ["E:/GitHub"], maxDepth: 3 },
   // Browser / UI testing toolset (Playwright MCP). Default for new sessions; toggle per-session in the UI.
   browser: { enabled: false },
+  // Centralised tool server (MCP HTTP on the Windows host, served to all distros).
+  toolServer: { enabled: false, port: 4319 },
 };
 
 /** Coerce a scalar YAML value to a JS string/number/boolean/null. */
@@ -111,6 +113,8 @@ function applyEnv(cfg) {
   if (envNum(process.env.CONTINUE_BUFFER_SECONDS) !== undefined) cfg.continue.bufferSeconds = envNum(process.env.CONTINUE_BUFFER_SECONDS);
   if (envNum(process.env.CONTINUE_MIN_INTERVAL_SECONDS) !== undefined) cfg.continue.minIntervalSeconds = envNum(process.env.CONTINUE_MIN_INTERVAL_SECONDS);
   if (process.env.FLEET_BROWSER) cfg.browser.enabled = /^(1|true|yes|on)$/i.test(process.env.FLEET_BROWSER);
+  if (process.env.TOOL_SERVER) cfg.toolServer.enabled = /^(1|true|yes|on)$/i.test(process.env.TOOL_SERVER);
+  if (envNum(process.env.TOOL_SERVER_PORT) !== undefined) cfg.toolServer.port = envNum(process.env.TOOL_SERVER_PORT);
   return cfg;
 }
 

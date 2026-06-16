@@ -29,3 +29,9 @@ browser:
   enabled: false          # default for new sessions: attach the Playwright MCP browser toolset so
                           # Claude can navigate/click/type/screenshot for UI testing. Toggle per
                           # session in the Controls tab. Prereq: `npx playwright install chromium`.
+
+toolServer:
+  enabled: false          # attach 26 centralised code-intelligence tools (RTK, Chunkhound, Graphify,
+                          # Cavemem, SSE, DHL, LIC, TDS, COG, etc.) to every session via MCP HTTP.
+                          # Run scripts/start-tool-server.ps1 first; no per-distro install needed.
+  port: 4319              # MCP HTTP port the adapter listens on

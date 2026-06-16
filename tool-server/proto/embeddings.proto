@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+package embeddings;
+
+// ---------------------------------------------------------------------------
+// Embedding service (Phase 4)
+// ---------------------------------------------------------------------------
+
+message EmbedRequest {
+  repeated string texts = 1;
+  string model = 2;      // default: "all-MiniLM-L6-v2"
+  string namespace = 3;  // used for cache grouping
+}
+
+message EmbedResponse {
+  repeated EmbedVector vectors = 1;
+}
+
+message EmbedVector {
+  string id = 1;
+  repeated float values = 2;
+}
+
+message SearchRequest {
+  string query = 1;
+  string namespace = 2;
+  int32 top_k = 3;        // default 10
+  float threshold = 4;    // min cosine similarity (default 0.0)
+  string model = 5;
+}
+
+message SearchResponse {
+  repeated SearchResult results = 1;
+}
+
+message SearchResult {
+  string id = 1;
+  string text = 2;
+  float score = 3;
+}
+
+message CacheRequest {
+  string namespace = 1;
+  repeated CacheEntry entries = 2;
+}
+
+message CacheEntry {
+  string id = 1;
+  string text = 2;
+}
+
+message CacheResponse {
+  int32 indexed = 1;
+}
+
+message DedupeRequest {
+  repeated string texts = 1;
+  float threshold = 2; // cosine similarity threshold for deduplication (default 0.85)
+  string model = 3;
+}
+
+message DedupeResponse {
+  repeated string representatives = 1; // one text per cluster
+  repeated int32 cluster_ids = 2;      // cluster id per input text
+}
+
+message RelevanceRequest {
+  string query = 1;
+  repeated string candidates = 2;
+  string model = 3;
+  int32 top_k = 4;
+}
+
+message RelevanceResponse {
+  repeated RankedItem items = 1;
+}
+
+message RankedItem {
+  int32 index = 1;
+  string text = 2;
+  float score = 3;
+}
+
+service EmbeddingServer {
+  rpc Embed(EmbedRequest) returns (EmbedResponse);
+  rpc Search(SearchRequest) returns (SearchResponse);
+  rpc Cache(CacheRequest) returns (CacheResponse);
+  rpc Dedupe(DedupeRequest) returns (DedupeResponse);
+  rpc Rank(RelevanceRequest) returns (RelevanceResponse);
+}

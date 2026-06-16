@@ -1,0 +1,207 @@
+syntax = "proto3";
+
+package tools;
+
+import "google/protobuf/struct.proto";
+
+// ---------------------------------------------------------------------------
+// Common types
+// ---------------------------------------------------------------------------
+
+message TextRequest {
+  string content = 1;
+  string language = 2; // optional: "python", "rust", "typescript", etc.
+  string file_path = 3; // optional: used for language detection / context
+}
+
+message ChunkRequest {
+  repeated string chunks = 1; // text blocks to process
+  int32 budget_tokens = 2;    // max total tokens in output
+  string query = 3;           // relevance hint (for scoring)
+}
+
+message FilePath {
+  string path = 1; // absolute path (Linux or /mnt/... for WSL)
+}
+
+message LineRange {
+  int32 start = 1;
+  int32 end = 2;
+}
+
+message ToolResult {
+  bool ok = 1;
+  string error = 2;
+  google.protobuf.Struct data = 3;
+  string text = 4; // flat text output (alternative to structured data)
+}
+
+// ---------------------------------------------------------------------------
+// Token tools (Phase 2)
+// ---------------------------------------------------------------------------
+
+message RtkRequest {
+  repeated RtkChunk chunks = 1;
+  int32 budget_tokens = 2;
+  string query = 3;
+}
+message RtkChunk {
+  string text = 1;
+  float relevance_score = 2; // 0-1; 0 = use token density
+  string id = 3;
+}
+
+message TdsRequest {
+  string diff = 1;        // unified diff text
+  int32 context_lines = 2; // lines around each hunk (default 3)
+  int32 budget_tokens = 3;
+}
+
+message BudgetRequest {
+  repeated BudgetItem items = 1;
+  int32 budget_tokens = 2;
+}
+message BudgetItem {
+  string id = 1;
+  string text = 2;
+  float priority = 3; // 0-1
+}
+
+message CogRequest {
+  string text = 1;
+  int32 max_tokens = 2;
+  string boundary = 3; // "sentence" | "paragraph" | "line" (default "sentence")
+}
+
+// ---------------------------------------------------------------------------
+// Log tools (Phase 2)
+// ---------------------------------------------------------------------------
+
+message LogRequest {
+  string log_text = 1;
+  int32 max_groups = 2; // max deduplicated groups to return (default 100)
+}
+
+message StackRequest {
+  string stack_text = 1;
+  int32 head_frames = 2; // keep this many top frames (default 3)
+  int32 tail_frames = 3; // keep this many bottom frames (default 3)
+}
+
+message LicRequest {
+  string log_text = 1;
+}
+
+message EtmRequest {
+  string trace_text = 1; // execution trace with timestamps
+  float threshold_ms = 2; // collapse paths taking < this (default 10.0)
+}
+
+// ---------------------------------------------------------------------------
+// Memory tool (Phase 2) — Cavemem
+// ---------------------------------------------------------------------------
+
+message MemSetRequest {
+  string namespace = 1; // e.g. "{session_id}:{repo_path}"
+  string key = 2;
+  string value = 3;
+  int64 ttl_seconds = 4; // 0 = no expiry
+}
+message MemGetRequest {
+  string namespace = 1;
+  string key = 2;
+}
+message MemListRequest {
+  string namespace = 1;
+  string prefix = 2;
+}
+message MemDeleteRequest {
+  string namespace = 1;
+  string key = 2;
+}
+
+// ---------------------------------------------------------------------------
+// AST tools (Phase 3)
+// ---------------------------------------------------------------------------
+
+message ChunkhoundRequest {
+  string file_path = 1;
+  repeated string kinds = 2; // "function" | "class" | "method" | "block" (empty = all)
+}
+
+message RegionRequest {
+  string file_path = 1;
+  string symbol = 2;   // symbol name (optional if line given)
+  int32 line = 3;      // 1-based line number (optional if symbol given)
+  int32 context_lines = 4;
+}
+
+message SseRequest {
+  string file_path = 1;
+  string symbol = 2;
+  repeated string search_roots = 3; // dirs to search for usages
+  int32 context_lines = 4;
+}
+
+message GraphifyRequest {
+  string file_path = 1;
+  repeated string search_roots = 2;
+  int32 depth = 3;        // BFS depth from seed (default 3)
+  string seed_symbol = 4; // optional: start from this symbol
+}
+
+message HorizonRequest {
+  string file_path = 1;
+  string seed_symbol = 2;
+  int32 depth = 3;
+}
+
+message SafrRequest {
+  string file_path = 1;
+}
+
+message DhlRequest {
+  // Generic graph represented as adjacency list
+  repeated DhlEdge edges = 1;
+  string seed_node = 2;
+  int32 horizon = 3;
+}
+message DhlEdge {
+  string from = 1;
+  string to = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Main service
+// ---------------------------------------------------------------------------
+
+service ToolServer {
+  // Token tools
+  rpc Rtk(RtkRequest) returns (ToolResult);
+  rpc Tds(TdsRequest) returns (ToolResult);
+  rpc NoiseFilter(TextRequest) returns (ToolResult);
+  rpc Budget(BudgetRequest) returns (ToolResult);
+  rpc Cog(CogRequest) returns (ToolResult);
+
+  // Log tools
+  rpc LogDedup(LogRequest) returns (ToolResult);
+  rpc StackCollapse(StackRequest) returns (ToolResult);
+  rpc LogClassify(LicRequest) returns (ToolResult);
+  rpc TraceMinimize(EtmRequest) returns (ToolResult);
+
+  // Memory
+  rpc MemSet(MemSetRequest) returns (ToolResult);
+  rpc MemGet(MemGetRequest) returns (ToolResult);
+  rpc MemList(MemListRequest) returns (ToolResult);
+  rpc MemDelete(MemDeleteRequest) returns (ToolResult);
+
+  // AST / Graph tools
+  rpc Chunkhound(ChunkhoundRequest) returns (ToolResult);
+  rpc RegionExtract(RegionRequest) returns (ToolResult);
+  rpc SymbolScope(SseRequest) returns (ToolResult);
+  rpc Graphify(GraphifyRequest) returns (ToolResult);
+  rpc ImportPrune(GraphifyRequest) returns (ToolResult);
+  rpc AstHorizon(HorizonRequest) returns (ToolResult);
+  rpc Safr(SafrRequest) returns (ToolResult);
+  rpc Dhl(DhlRequest) returns (ToolResult);
+}

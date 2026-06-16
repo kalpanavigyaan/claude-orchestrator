@@ -1,0 +1,20 @@
+# Rust build artifacts
+core/target/
+
+# Node.js
+mcp-adapter/node_modules/
+mcp-adapter/dist/
+
+# Python
+embeddings/__pycache__/
+embeddings/src/__pycache__/
+embeddings/src/gen/
+embeddings/.venv/
+embeddings/*.egg-info/
+embeddings/data/
+
+# PID files
+.pids/
+
+# sled database
+data/

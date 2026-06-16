@@ -11,7 +11,7 @@
 
 // Must match orchestrator BUILD. If the server reports a different build, this page is running a
 // stale cached app.js — we show a banner so it's never a silent mystery. Bump both on UI changes.
-const APP_BUILD = "2026-06-16a";
+const APP_BUILD = "2026-06-16b";
 
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
 const tokenQuery = TOKEN ? `?token=${encodeURIComponent(TOKEN)}` : "";
@@ -410,12 +410,30 @@ function renderUsage() {
   }
   const nSessions = (latest && latest.sessions ? latest.sessions.length : 0);
   const plan = u && u.subscriptionType ? ` · ${escapeHtml(String(u.subscriptionType))} plan` : "";
+  const cached = totals.cacheReadTokens || 0;
   html +=
     `<div class="usage-card totals">
       <div class="uc-head"><span class="uc-title">This run${plan}</span></div>
       <div class="uc-big">$${(totals.costUsd || 0).toFixed(4)}</div>
-      <div class="uc-sub">${fmtTokens(totals.inputTokens)} in · ${fmtTokens(totals.outputTokens)} out · ${nSessions} session${nSessions === 1 ? "" : "s"}</div>
+      <div class="uc-sub">${fmtTokens(totals.inputTokens)} in · ${fmtTokens(totals.outputTokens)} out${cached ? " · " + fmtTokens(cached) + " cached" : ""} · ${nSessions} session${nSessions === 1 ? "" : "s"}</div>
     </div>`;
+  // Per-session token usage. The account 5h/weekly windows above only expose a utilization % (Anthropic
+  // doesn't break them into tokens), so per-session in/out lives here — from each session's cumulative
+  // result.usage. Costs nothing: it's metadata the SDK already returns with every turn's result.
+  for (const s of (latest && latest.sessions) || []) {
+    const r = s.lastResult || {};
+    const tu = r.usage || {};
+    const inTok = tu.input_tokens || 0;
+    const outTok = tu.output_tokens || 0;
+    const cacheTok = (tu.cache_read_input_tokens || 0) + (tu.cache_creation_input_tokens || 0);
+    if (!inTok && !outTok && !cacheTok && !(r.cost > 0)) continue; // no turn recorded yet
+    html +=
+      `<div class="usage-card session">
+        <div class="uc-head"><span class="uc-title" title="${escapeHtml(s.label)}">${escapeHtml(s.label)}</span></div>
+        <div class="uc-big">$${(r.cost || 0).toFixed(4)}</div>
+        <div class="uc-sub">${fmtTokens(inTok)} in · ${fmtTokens(outTok)} out${cacheTok ? " · " + fmtTokens(cacheTok) + " cached" : ""}</div>
+      </div>`;
+  }
   usageBarEl.innerHTML = html;
 }
 
@@ -486,7 +504,7 @@ function updateWorking() {
   }
   workingTextEl.textContent = text;
   if (workingCmdEl) {
-    workingCmdEl.textContent = showCmd && lastTool ? "🔧 " + toolSummary(lastTool) : "";
+    workingCmdEl.textContent = showCmd ? workingDetail() : "";
   }
   if (workingStopEl) {
     // Only offer "Stop" when there's an active turn to interrupt.
@@ -565,7 +583,8 @@ function renderStatusBar() {
     text = `Sending to Claude… ${secs(sendingSince)}`;
   } else if (s.status === "running") {
     cls = "statusbar busy";
-    text = `Claude is working… ${secs(sbBusySince)}` + (lastTool ? `  ·  🔧 ${toolSummary(lastTool)}` : "");
+    const detail = workingDetail();
+    text = `Claude is working… ${secs(sbBusySince)}` + (detail ? `  ·  ${detail}` : "");
   } else if (s.status === "starting") {
     cls = "statusbar busy";
     text = `Starting session… ${secs(sbBusySince)}`;
@@ -636,7 +655,7 @@ function renderControls(s) {
   const models = (latest && latest.models) || [];
   // Stable signature so the inputs don't reset on every poll; covers all three states.
   const sig = s
-    ? "live|" + [s.id, s.status, s.mode, s.model, models.length, s.effort || "", s.thinking || "", s.browser ? 1 : 0].join("|")
+    ? "live|" + [s.id, s.status, s.mode, s.model, models.length, s.effort || "", s.thinking || "", s.browser ? 1 : 0, s.autoContinue === false ? 0 : 1].join("|")
     : viewingRel
       ? "past|" + viewingRel
       : "none";
@@ -687,6 +706,9 @@ function renderControls(s) {
        <label class="rb-label">🌐 Browser (UI testing)</label>
        <label class="rb-check"><input type="checkbox" id="ctl-browser" ${s.browser ? "checked" : ""}/> Enable Playwright browser tools</label>
        <div class="rb-note">Lets Claude navigate, click, type & screenshot a real browser. First use may take a few seconds to start.</div>
+       <label class="rb-label">♻ Auto-continue</label>
+       <label class="rb-check"><input type="checkbox" id="ctl-autocontinue" ${s.autoContinue === false ? "" : "checked"}/> Auto-continue after the 5-hour reset</label>
+       <div class="rb-note">When on, this session runs a turn unattended after each usage reset — that spends tokens on its own. Turn off to make it wait for you.</div>
      </div>
      <div class="rb-actions">
        <button id="ctl-instr">📄 Instructions</button>
@@ -697,6 +719,10 @@ function renderControls(s) {
      </div>`;
   el("ctl-browser").addEventListener("change", async (e) => {
     await api(`/api/sessions/${s.id}/set-browser`, { enabled: e.target.checked });
+    pollFleet();
+  });
+  el("ctl-autocontinue").addEventListener("change", async (e) => {
+    await api(`/api/sessions/${s.id}/auto-continue`, { enabled: e.target.checked });
     pollFleet();
   });
   el("ctl-mode").addEventListener("change", async (e) => {
@@ -817,6 +843,7 @@ function selectSession(id) {
   approvalQueue = [];
   seenApprovalIds = new Set();
   lastTool = null;
+  currentActivity = null;
   lastAssistantText = "";
   for (const n of el("history-list-side") ? el("history-list-side").children : []) n.classList.remove("active");
   updateComposer(); // enable the composer immediately, without waiting for the next poll
@@ -878,6 +905,11 @@ async function syncSession(id) {
           enqueueApproval(a);
         }
       }
+      // Live in-turn activity (thinking/responding). Refresh the working line + status bar immediately
+      // so progress shows between full messages, not just on the next fleet poll.
+      currentActivity = d.activity || null;
+      updateWorking();
+      renderStatusBar();
     }
   } finally {
     syncing = false;
@@ -889,6 +921,23 @@ async function syncSession(id) {
 }
 
 let lastTool = null;
+// Live in-turn activity from the runner's partial-message stream (thinking / drafting a reply). Lets
+// the working line show real progress instead of a bare "Claude is working…" during long silent phases.
+let currentActivity = null;
+
+/** Short label for the current in-turn activity (thinking/responding). Tool prep defers to lastTool. */
+function activityLabel(act) {
+  if (!act || !act.phase) return "";
+  const preview = (act.preview || "").replace(/\s+/g, " ").trim().slice(-80);
+  if (act.phase === "thinking") return preview ? `💭 Thinking… ${preview}` : "💭 Thinking…";
+  if (act.phase === "responding") return preview ? `✍️ ${preview}` : "✍️ Responding…";
+  return ""; // "tool" phase: let the concrete tool summary (lastTool) show instead
+}
+
+/** The best one-line detail for the working line: live activity if any, else the latest tool call. */
+function workingDetail() {
+  return activityLabel(currentActivity) || (lastTool ? "🔧 " + toolSummary(lastTool) : "");
+}
 
 /** Compact one-line summary of a tool call: "Bash · git status", "Edit · src/app.js", etc. */
 function toolSummary(m) {
@@ -1241,6 +1290,7 @@ el("f-create").addEventListener("click", async () => {
     effort: el("f-effort").value,
     thinking: el("f-thinking").value,
     browser: el("f-browser").checked,
+    autoContinue: el("f-autocontinue").checked,
     initialPrompt: el("f-prompt").value,
   };
   if (!spec.cwd) { alert("Working directory is required."); return; }

@@ -37,6 +37,30 @@ const MESSAGE_CAP = 500;
 const SESSIONS_DIR = config.sessions.dir;
 const REPO_LOCAL_ROOTS = (config.repos && Array.isArray(config.repos.localRoots)) ? config.repos.localRoots : [];
 const REPO_MAX_DEPTH = (config.repos && config.repos.maxDepth) || 3;
+const TOOL_SERVER_ENABLED = !!(config.toolServer && config.toolServer.enabled);
+const TOOL_SERVER_PORT = (config.toolServer && config.toolServer.port) || 4319;
+
+// Windows host IP as seen from WSL — resolved once at startup so all WSL runners can reach the
+// tool server over HTTP MCP without any per-distro installation.
+let windowsHostIP = "127.0.0.1";
+async function resolveWindowsHostIP() {
+  if (process.platform !== "win32") return;
+  // wsl.exe ip route returns a line like: "default via 172.x.x.x dev eth0"
+  const r = await runCapture("wsl.exe", ["-e", "sh", "-c",
+    "ip route show default 2>/dev/null | awk '/default/{print $3; exit}'"
+  ], { timeoutMs: 5000 });
+  const ip = r.ok ? r.out.trim() : "";
+  if (ip && /^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
+    windowsHostIP = ip;
+  }
+}
+
+/** URL of the tool-server MCP endpoint as seen from a given host. */
+function toolServerUrl(host) {
+  if (!TOOL_SERVER_ENABLED) return null;
+  const ip = host === "wsl" ? windowsHostIP : "127.0.0.1";
+  return `http://${ip}:${TOOL_SERVER_PORT}/mcp`;
+}
 // Tool categories for the per-category auto-approve toggles (mirrors runner.mjs).
 const EDIT_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit", "Update", "Create", "ApplyPatch"]);
 const READ_TOOLS = new Set(["Read", "Grep", "Glob", "LS", "NotebookRead", "TodoWrite"]);
@@ -192,15 +216,19 @@ function aggregateUsage() {
   let costUsd = 0;
   let inputTokens = 0;
   let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheCreationTokens = 0;
   for (const s of sessions.values()) {
     if (s.lastResult) {
       costUsd += s.lastResult.cost || 0;
       const u = s.lastResult.usage || {};
       inputTokens += u.input_tokens || 0;
       outputTokens += u.output_tokens || 0;
+      cacheReadTokens += u.cache_read_input_tokens || 0;
+      cacheCreationTokens += u.cache_creation_input_tokens || 0;
     }
   }
-  return { costUsd, inputTokens, outputTokens };
+  return { costUsd, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens };
 }
 
 /**
@@ -231,7 +259,7 @@ function applyUsageReport(report) {
 
 // Bump on any public/ UI change. The client compares its own APP_BUILD to this and shows a
 // "you're running an old version, refresh" banner on mismatch — ends the "is my page stale?" guessing.
-const BUILD = "2026-06-16a";
+const BUILD = "2026-06-16b";
 
 function fleetSnapshot() {
   return {
@@ -832,6 +860,7 @@ function createSession(spec) {
     browser,
     effort,
     thinking,
+    toolServerUrl: toolServerUrl(host),
     // Resume a saved conversation: by SDK session id when known, else continue the most recent
     // conversation in this cwd (covers sessions created before ids were captured).
     resume: spec.resume || undefined,
@@ -870,6 +899,7 @@ function createSession(spec) {
     sse: new Set(),
     runnerConfig,
     lastResult: null,
+    activity: null,
     dirty: true,
     proc: null,
   };
@@ -1042,11 +1072,14 @@ function handleRunnerEvent(s, event) {
         s.status = s.status === "starting" ? "idle" : s.status;
       } else if (event.status === "idle") {
         s.status = "idle";
+        s.activity = null;
       } else if (event.status === "error") {
         s.status = "error";
+        s.activity = null;
         recordMessage(s, { role: "system", text: `error: ${event.detail || ""}` });
       } else if (event.status === "ended") {
         s.status = "ended";
+        s.activity = null;
       }
       break;
     case "assistant":
@@ -1055,6 +1088,12 @@ function handleRunnerEvent(s, event) {
       break;
     case "tool_use":
       recordMessage(s, { role: "tool", name: event.name, input: event.input });
+      break;
+    case "activity":
+      // Live in-turn status (thinking/responding/preparing a tool) — NOT a chat message, just a
+      // transient indicator surfaced in the working line. Wake the per-session SSE so the UI resyncs.
+      s.activity = event.phase ? { phase: event.phase, preview: event.preview || "", ts: now() } : null;
+      pushSessionEvent(s, { kind: "activity" });
       break;
     case "models":
       if (Array.isArray(event.models)) {
@@ -1101,6 +1140,7 @@ function handleRunnerEvent(s, event) {
     case "result":
       s.lastResult = { subtype: event.subtype, cost: event.cost, turns: event.turns, usage: event.usage };
       s.status = "idle";
+      s.activity = null;
       if (event.resultText) {
         recordMessage(s, { role: "result", text: event.resultText });
       }
@@ -1316,7 +1356,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 404, { ok: false });
       return;
     }
-    sendJson(res, 200, { ...sessionSummary(s), messages: s.messages });
+    sendJson(res, 200, { ...sessionSummary(s), messages: s.messages, activity: s.activity || null });
     return;
   }
 
@@ -1400,6 +1440,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { ok: r.alive });
     } else if (verb === "message") {
       const text = String(body.text || "");
+      s.activity = null; // drop any stale activity from the previous turn until the new one reports in
       recordMessage(s, { role: "user", text });
       // Deliver to a live runner, or hand the text to a freshly respawned one as its initial prompt
       // so messages are never silently dropped into a dead process (which previously left the UI
@@ -1639,9 +1680,15 @@ setInterval(broadcastFleet, 1000);
 setInterval(persistDirtySessions, 1000);
 setInterval(usageTick, USAGE_POLL_MS);
 
-server.listen(PORT, HOST, () => {
-  const auth = TOKEN ? " (token required)" : " (no token — set FLEET_TOKEN to lock down)";
-  console.log(`[fleet-console] http://${HOST}:${PORT}${auth}`);
-  console.log(`[fleet-console] config: ${configSource} · sessions: ${SESSIONS_DIR} · usage poll: ${USAGE_POLL_MS / 1000}s`);
-  usageTick(); // fetch account usage right away so it's available at startup
+// Resolve the Windows host IP before starting so WSL runners know where to find the tool server.
+resolveWindowsHostIP().then(() => {
+  server.listen(PORT, HOST, () => {
+    const auth = TOKEN ? " (token required)" : " (no token — set FLEET_TOKEN to lock down)";
+    console.log(`[fleet-console] http://${HOST}:${PORT}${auth}`);
+    console.log(`[fleet-console] config: ${configSource} · sessions: ${SESSIONS_DIR} · usage poll: ${USAGE_POLL_MS / 1000}s`);
+    if (TOOL_SERVER_ENABLED) {
+      console.log(`[fleet-console] tool-server MCP enabled — Windows host IP: ${windowsHostIP} → :${TOOL_SERVER_PORT}`);
+    }
+    usageTick(); // fetch account usage right away so it's available at startup
+  });
 });

@@ -85,18 +85,68 @@ function toolCategory(name) {
 // while `npx` fetches @playwright/mcp on a cold start; Claude finds the tools via tool search.
 let browserEnabled = !!config.browser;
 function browserServers() {
-  const isWin = process.platform === "win32";
-  const args = ["-y", "@playwright/mcp@latest"];
-  if (!isWin) args.push("--headless");
-  return {
-    playwright: isWin
+  const servers = {};
+
+  // Playwright MCP (browser tools)
+  if (browserEnabled) {
+    const isWin = process.platform === "win32";
+    const args = ["-y", "@playwright/mcp@latest"];
+    if (!isWin) args.push("--headless");
+    servers.playwright = isWin
       ? { command: "cmd", args: ["/c", "npx", ...args] }
-      : { command: "npx", args },
-  };
+      : { command: "npx", args };
+  }
+
+  // Central tool server (RTK, Chunkhound, Graphify, Cavemem, SSE, etc.)
+  // Served from Windows host; WSL runners connect via Windows host IP injected into toolServerUrl.
+  const toolUrl = config.toolServerUrl;
+  if (toolUrl) {
+    servers.toolServer = { url: toolUrl };
+  }
+
+  return servers;
 }
 
 function emit(event) {
   process.stdout.write(JSON.stringify(event) + "\n");
+}
+
+// Live in-turn activity: surface what Claude is doing BETWEEN visible messages — thinking, drafting a
+// reply, or preparing a tool call — so the UI never shows a bare "Claude is working…" with no detail
+// (the model can think for a long stretch before any complete message exists). Driven by the
+// includePartialMessages stream_event deltas; throttled so per-token deltas don't flood the pipe.
+let activityPhase = null;
+let activityPreview = "";
+let activityLastEmit = 0;
+const ACTIVITY_THROTTLE_MS = 350;
+
+function setActivity(phase, chunk) {
+  if (phase !== activityPhase) {
+    activityPhase = phase;
+    activityPreview = "";
+    activityLastEmit = 0; // force an immediate emit when the phase changes
+  }
+  if (chunk) activityPreview = (activityPreview + chunk).slice(-200); // short rolling tail
+  const t = Date.now();
+  if (t - activityLastEmit < ACTIVITY_THROTTLE_MS) return;
+  activityLastEmit = t;
+  emit({ type: "activity", phase: activityPhase, preview: activityPreview.trim() });
+}
+
+/** Translate a partial-message stream event into a coarse activity phase (+ rolling text preview). */
+function trackActivity(ev) {
+  if (!ev) return;
+  if (ev.type === "content_block_start") {
+    const b = ev.content_block || {};
+    if (b.type === "thinking") setActivity("thinking", "");
+    else if (b.type === "text") setActivity("responding", "");
+    else if (b.type === "tool_use") setActivity("tool", "");
+  } else if (ev.type === "content_block_delta") {
+    const d = ev.delta || {};
+    if (d.type === "thinking_delta") setActivity("thinking", d.thinking || "");
+    else if (d.type === "text_delta") setActivity("responding", d.text || "");
+    else if (d.type === "input_json_delta") setActivity("tool", "");
+  }
 }
 
 function toEpochMs(value) {
@@ -219,10 +269,11 @@ rl.on("line", (line) => {
       break;
     case "set_browser":
       // Attach/detach the Playwright browser toolset mid-session via setMcpServers().
+      // The central tool server (if configured) stays connected regardless of browser toggle.
       browserEnabled = !!cmd.enabled;
       if (sdkSession && typeof sdkSession.setMcpServers === "function") {
         sdkSession
-          .setMcpServers(browserEnabled ? browserServers() : {})
+          .setMcpServers(browserServers())
           .then(() => emit({ type: "browser", enabled: browserEnabled }))
           .catch((e) => emit({ type: "log", level: "warn", message: `set browser failed: ${e}` }));
       } else {
@@ -320,6 +371,9 @@ async function main() {
   // thinking is adaptive (model decides) unless turned off.
   if (currentEffort) options.effort = currentEffort;
   options.thinking = thinkingConfig(currentThinking);
+  // Stream partial messages so we can surface live "thinking…/responding…" activity (see trackActivity).
+  // Without this the model can run silently for a long stretch and the UI shows only a bare "working…".
+  options.includePartialMessages = true;
   // canUseTool is our single permission authority for every session — it auto-approves the
   // categories the user toggled (and read-only tools) and prompts for the rest. This is what makes
   // "auto-approve shell" actually let Bash/git run (the SDK's permissionMode only covers edits).
@@ -371,7 +425,9 @@ async function main() {
         lastSessionId = message.session_id;
         emit({ type: "session_id", id: message.session_id }); // so the orchestrator can save it for resume
       }
-      if (message.type === "assistant" && message.message && Array.isArray(message.message.content)) {
+      if (message.type === "stream_event") {
+        trackActivity(message.event);
+      } else if (message.type === "assistant" && message.message && Array.isArray(message.message.content)) {
         for (const block of message.message.content) {
           if (block.type === "text" && block.text) {
             emit({ type: "assistant", text: block.text });
