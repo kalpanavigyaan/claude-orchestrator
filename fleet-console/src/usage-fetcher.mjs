@@ -38,6 +38,7 @@ async function main() {
             subscriptionType: u.subscription_type ?? null,
             available: !!u.rate_limits_available,
             rateLimits: u.rate_limits || null,
+            behaviors: u.behaviors || null,
           },
         }) + "\n"
       );

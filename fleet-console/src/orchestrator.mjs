@@ -235,6 +235,7 @@ function aggregateUsage() {
 /**
  * Apply a /usage report (from the usage-fetcher) to the account-wide window state. rate_limits is
  * account-wide; each window's utilization is a 0-100 percentage and resets_at is an ISO timestamp.
+ * When rate_limits is null (Max plan), we synthesise windows from the behaviors request counts.
  */
 function applyUsageReport(report) {
   if (!report) {
@@ -245,10 +246,12 @@ function applyUsageReport(report) {
   }
   accountRateLimitsAvailable = !!report.available;
   const limits = report.rateLimits || {};
+  let hadWindows = false;
   for (const [key, w] of Object.entries(limits)) {
     if (!w || typeof w.utilization !== "number") {
       continue;
     }
+    hadWindows = true;
     accountUsage.set(key, {
       type: key,
       utilization: w.utilization,
@@ -256,11 +259,37 @@ function applyUsageReport(report) {
       updatedAt: now(),
     });
   }
+  // For Max plan (rate_limits null) synthesise display windows from behaviors request counts.
+  // We show today / this-week request counts as pseudo-utilization so the bar is never empty.
+  if (!hadWindows && report.behaviors) {
+    const day = report.behaviors.day || {};
+    const week = report.behaviors.week || {};
+    if (typeof day.request_count === "number") {
+      accountUsage.set("day_requests", {
+        type: "day_requests",
+        utilization: null,
+        requestCount: day.request_count,
+        sessionCount: day.session_count || 0,
+        resetAt: null,
+        updatedAt: now(),
+      });
+    }
+    if (typeof week.request_count === "number") {
+      accountUsage.set("week_requests", {
+        type: "week_requests",
+        utilization: null,
+        requestCount: week.request_count,
+        sessionCount: week.session_count || 0,
+        resetAt: null,
+        updatedAt: now(),
+      });
+    }
+  }
 }
 
 // Bump on any public/ UI change. The client compares its own APP_BUILD to this and shows a
 // "you're running an old version, refresh" banner on mismatch — ends the "is my page stale?" guessing.
-const BUILD = "2026-06-16c";
+const BUILD = "2026-06-16d";
 
 function fleetSnapshot() {
   return {

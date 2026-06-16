@@ -11,7 +11,7 @@
 
 // Must match orchestrator BUILD. If the server reports a different build, this page is running a
 // stale cached app.js — we show a banner so it's never a silent mystery. Bump both on UI changes.
-const APP_BUILD = "2026-06-16c";
+const APP_BUILD = "2026-06-16d";
 
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
 const tokenQuery = TOKEN ? `?token=${encodeURIComponent(TOKEN)}` : "";
@@ -354,6 +354,8 @@ const WINDOW_LABELS = {
   seven_day_opus: "Weekly · Opus",
   seven_day_sonnet: "Weekly · Sonnet",
   seven_day_oauth_apps: "Weekly · apps",
+  day_requests: "Today · requests",
+  week_requests: "This week · requests",
 };
 // Display order; any window not listed is appended after these.
 const WINDOW_ORDER = ["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet"];
@@ -408,8 +410,22 @@ function renderUsage() {
   let html = "";
   for (const w of windows) {
     const p = clampPct(w.utilization);
+    const cls = p != null ? (p >= 90 ? "high" : p >= 70 ? "warn" : "") : "";
+    // Count-only card (Max plan — no utilization %, just request/session counts)
+    if (p == null && (w.requestCount != null)) {
+      html +=
+        `<div class="usage-card">
+          <div class="uc-head">
+            <span class="uc-title">${escapeHtml(windowLabel(w.type))}</span>
+            <span class="uc-pct">${w.requestCount.toLocaleString()} req</span>
+          </div>
+          <div class="uc-meta">
+            <span>${w.requestCount.toLocaleString()} requests · ${w.sessionCount || 0} sessions</span>
+          </div>
+        </div>`;
+      continue;
+    }
     if (p == null) continue;
-    const cls = p >= 90 ? "high" : p >= 70 ? "warn" : "";
     html +=
       `<div class="usage-card">
         <div class="uc-head">
@@ -566,9 +582,13 @@ function renderStatusBar() {
     const w = u.windows || [];
     const fh = w.find((x) => x.type === "five_hour");
     const sd = w.find((x) => x.type === "seven_day");
+    const dayReq = w.find((x) => x.type === "day_requests");
+    const wkReq = w.find((x) => x.type === "week_requests");
     const parts = [];
     if (fh && typeof fh.utilization === "number") parts.push(`5h ${fh.utilization}%`);
     if (sd && typeof sd.utilization === "number") parts.push(`wk ${sd.utilization}%`);
+    if (!parts.length && dayReq) parts.push(`today ${dayReq.requestCount.toLocaleString()} req`);
+    if (!parts.length && wkReq) parts.push(`wk ${wkReq.requestCount.toLocaleString()} req`);
     const plan = u.subscriptionType ? u.subscriptionType : "";
     if (parts.length) {
       sbUsageEl.textContent = (plan ? plan + " · " : "") + parts.join(" · ");
@@ -1724,8 +1744,10 @@ function insertCommand(c) {
 function setRightTab(tab) {
   for (const t of document.querySelectorAll(".rb-tab")) t.classList.toggle("active", t.dataset.tab === tab);
   el("rb-controls").classList.toggle("hidden", tab !== "controls");
+  el("rb-intelligence").classList.toggle("hidden", tab !== "intelligence");
   el("rb-commands").classList.toggle("hidden", tab !== "commands");
   if (tab === "controls") renderControls(latest && selectedId ? latest.sessions.find((x) => x.id === selectedId) : null);
+  if (tab === "intelligence") renderIntelligence();
   if (tab === "commands") renderCommands();
 }
 for (const t of document.querySelectorAll(".rb-tab")) {
