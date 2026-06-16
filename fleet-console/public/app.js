@@ -11,7 +11,7 @@
 
 // Must match orchestrator BUILD. If the server reports a different build, this page is running a
 // stale cached app.js — we show a banner so it's never a silent mystery. Bump both on UI changes.
-const APP_BUILD = "2026-06-16d";
+const APP_BUILD = "2026-06-16e";
 
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
 const tokenQuery = TOKEN ? `?token=${encodeURIComponent(TOKEN)}` : "";
@@ -374,6 +374,8 @@ function fmtTokens(n) {
   return String(n);
 }
 
+let lastUsageSig = null;
+
 function renderUsage() {
   if (!usageBarEl) return;
   const u = latest && latest.usage;
@@ -390,21 +392,43 @@ function renderUsage() {
 
   // Show a loading skeleton while the usage-fetcher is running and we have no data yet.
   if (fetching && !windows.length) {
-    usageBarEl.classList.remove("hidden");
-    usageBarEl.innerHTML =
-      `<div class="usage-card usage-loading">
-        <div class="uc-head"><span class="uc-title">Fetching account usage…</span><span class="uc-spinner"></span></div>
-        <div class="uc-bar"><div class="uc-fill loading" style="width:100%"></div></div>
-        <div class="uc-meta"><span class="usage-loading-note">Connecting to Claude API to read usage limits</span></div>
-      </div>`;
+    if (lastUsageSig !== "loading") {
+      lastUsageSig = "loading";
+      usageBarEl.classList.remove("hidden");
+      usageBarEl.innerHTML =
+        `<div class="usage-card usage-loading">
+          <div class="uc-head"><span class="uc-title">Fetching account usage…</span><span class="uc-spinner"></span></div>
+          <div class="uc-bar"><div class="uc-fill loading" style="width:100%"></div></div>
+          <div class="uc-meta"><span class="usage-loading-note">Connecting to Claude API to read usage limits</span></div>
+        </div>`;
+    }
     return;
   }
 
   if (!windows.length && !hasTotals) {
-    usageBarEl.classList.add("hidden");
-    usageBarEl.innerHTML = "";
+    if (lastUsageSig !== "empty") {
+      lastUsageSig = "empty";
+      usageBarEl.classList.add("hidden");
+      usageBarEl.innerHTML = "";
+    }
     return;
   }
+
+  // Build a stable signature from data only (exclude fetching so spinner toggling never triggers a rebuild).
+  const nSessions = (latest && latest.sessions ? latest.sessions.length : 0);
+  const sessionTokenSig = ((latest && latest.sessions) || [])
+    .map((s) => { const r = s.lastResult || {}; return `${s.id}:${r.cost || 0}`; }).join(",");
+  const dataSig = windows.map((w) => `${w.type}:${w.utilization}:${w.requestCount}:${w.resetAt}`).join("|")
+    + "|" + totals.costUsd + "|" + totals.inputTokens + "|" + totals.outputTokens + "|" + nSessions
+    + "|" + sessionTokenSig;
+
+  // Only update the spinner visibility (no layout change) when data hasn't changed.
+  if (dataSig === lastUsageSig) {
+    const spinner = usageBarEl.querySelector(".uc-refreshing");
+    if (spinner) spinner.style.visibility = fetching ? "visible" : "hidden";
+    return;
+  }
+  lastUsageSig = dataSig;
   usageBarEl.classList.remove("hidden");
 
   let html = "";
@@ -439,10 +463,9 @@ function renderUsage() {
         </div>
       </div>`;
   }
-  const nSessions = (latest && latest.sessions ? latest.sessions.length : 0);
   const plan = u && u.subscriptionType ? ` · ${escapeHtml(String(u.subscriptionType))} plan` : "";
   const cached = totals.cacheReadTokens || 0;
-  const refreshing = fetching ? ` <span class="uc-refreshing" title="Refreshing usage data…">↻</span>` : "";
+  const refreshing = `<span class="uc-refreshing" title="Refreshing usage data…" style="visibility:${fetching ? 'visible' : 'hidden'}">↻</span>`;
   html +=
     `<div class="usage-card totals">
       <div class="uc-head"><span class="uc-title">This run${plan}</span>${refreshing}</div>
