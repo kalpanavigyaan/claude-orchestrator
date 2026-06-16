@@ -1135,7 +1135,12 @@ function serveStatic(res, pathname) {
       res.end("not found");
       return;
     }
-    res.writeHead(200, { "content-type": MIME[path.extname(filePath)] || "application/octet-stream" });
+    // No-cache so a browser never serves a stale app.js/styles.css after an update — without this,
+    // UI fixes silently don't reach the user until a hard refresh (they keep running old code).
+    res.writeHead(200, {
+      "content-type": MIME[path.extname(filePath)] || "application/octet-stream",
+      "cache-control": "no-cache, no-store, must-revalidate",
+    });
     res.end(content);
   });
 }
