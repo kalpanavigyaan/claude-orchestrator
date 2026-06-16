@@ -47,6 +47,20 @@ function toolCategory(name) {
   if (SHELL_TOOLS.has(name)) return "shell";
   return "other";
 }
+
+// Permission modes use Claude's own naming. Each maps to the SDK permissionMode (plan vs default;
+// canUseTool governs execution) and the set of auto-approved tool categories that canUseTool runs
+// without asking. Reads always run. "auto" = bypassPermissions (everything runs unattended).
+const MODES = {
+  default: { permissionMode: "default", approve: [] }, // Ask before edits
+  acceptEdits: { permissionMode: "default", approve: ["edits"] }, // Auto-accept edits
+  plan: { permissionMode: "plan", approve: [] }, // Plan (read-only)
+  bypassPermissions: { permissionMode: "default", approve: ["edits", "shell", "other"] }, // Auto
+};
+/** Normalize an incoming mode string to a known mode key. */
+function normalizeMode(m) {
+  return MODES[m] ? m : "default";
+}
 try {
   fs.mkdirSync(SESSIONS_DIR, { recursive: true });
 } catch {
@@ -153,8 +167,11 @@ function sessionSummary(s) {
     distro: s.distro || null,
     cwd: s.cwd,
     model: s.model || null,
+    mode: s.mode || "default",
     permissionMode: s.permissionMode || "default",
     autoApprove: s.autoApprove || [],
+    effort: s.effort || null,
+    thinking: s.thinking || "adaptive",
     browser: !!s.browser,
     policy: s.policy,
     status: s.status,
@@ -269,7 +286,10 @@ function sessionRecordObject(s) {
     cwd: s.cwd,
     model: s.model || null,
     policy: s.policy,
+    mode: s.mode || "default",
     permissionMode: s.permissionMode,
+    effort: s.effort || null,
+    thinking: s.thinking || "adaptive",
     browser: !!s.browser,
     sdkSessionId: s.sdkSessionId || null,
     status: s.status,
@@ -736,13 +756,18 @@ let reposComputing = false;
 
 function createSession(spec) {
   const id = crypto.randomBytes(5).toString("hex");
-  const policy = spec.policy === "ask" ? "ask" : "auto";
-  const permissionMode = spec.permissionMode || "default"; // plan vs default; execution is via autoApprove
-  // What runs without asking. Default to everything approved (all checkboxes on) — the user opts out
-  // of categories they want to be prompted for. Honored as-is when the spec sets it explicitly.
-  const autoApprove = Array.isArray(spec.autoApprove)
-    ? spec.autoApprove
-    : ["edits", "shell", "other"];
+  // Permission mode (Claude's naming) is the primary control. If only the legacy policy was given,
+  // derive a mode from it (ask -> "Ask before edits", auto -> "Auto").
+  const explicitPolicy = spec.policy === "ask" ? "ask" : spec.policy === "auto" ? "auto" : null;
+  const mode = normalizeMode(spec.mode || (explicitPolicy === "auto" ? "bypassPermissions" : "default"));
+  // policy drives the "work unattended" system note + auto-continue after the 5-hour reset. Only the
+  // full-access "Auto" mode is treated as unattended; everything else is interactive.
+  const policy = explicitPolicy || (mode === "bypassPermissions" ? "auto" : "ask");
+  const permissionMode = MODES[mode].permissionMode; // plan vs default; execution is via autoApprove
+  const autoApprove = MODES[mode].approve.slice(); // categories canUseTool runs without asking
+  // Reasoning effort + extended thinking.
+  const effort = spec.effort ? String(spec.effort) : null; // low|medium|high|xhigh|max|null(default)
+  const thinking = spec.thinking === "off" ? "off" : "adaptive";
   // Browser / UI testing toolset (Playwright MCP). Per-session opt-in; default from config.
   const browser = spec.browser != null ? !!spec.browser : !!(config.browser && config.browser.enabled);
   const host = spec.host === "wsl" ? "wsl" : "local";
@@ -800,6 +825,8 @@ function createSession(spec) {
     maxTurns: spec.maxTurns || undefined,
     autoApprove,
     browser,
+    effort,
+    thinking,
     // Resume a saved conversation: by SDK session id when known, else continue the most recent
     // conversation in this cwd (covers sessions created before ids were captured).
     resume: spec.resume || undefined,
@@ -815,8 +842,11 @@ function createSession(spec) {
     node: nodeBin,
     cwd: spec.cwd,
     model: spec.model || null,
+    mode,
     permissionMode,
     autoApprove,
+    effort,
+    thinking,
     browser,
     policy,
     autoContinue: spec.autoContinue !== false,
@@ -890,8 +920,11 @@ function resumeSession(rel) {
     distro: meta.distro || undefined,
     cwd: meta.cwd,
     model: meta.model || "",
+    mode: meta.mode || undefined,
     permissionMode: meta.permissionMode || undefined,
     policy: meta.policy || "auto",
+    effort: meta.effort || undefined,
+    thinking: meta.thinking || undefined,
     browser: meta.browser != null ? meta.browser : undefined,
     sessionDirOverride: dir,
     preload,
@@ -1037,6 +1070,12 @@ function handleRunnerEvent(s, event) {
       break;
     case "browser":
       s.browser = !!event.enabled;
+      break;
+    case "effort":
+      s.effort = event.effort || null;
+      break;
+    case "thinking":
+      s.thinking = event.thinking === "off" ? "off" : "adaptive";
       break;
     case "session_id":
       if (event.id && event.id !== s.sdkSessionId) {
@@ -1386,9 +1425,34 @@ const server = http.createServer(async (req, res) => {
       }
       sendJson(res, 200, { ok });
     } else if (verb === "set-mode") {
-      const mode = String(body.mode || "default");
-      s.permissionMode = mode; // plan vs default; optimistic, runner echoes "mode" on success
-      const ok = writeToRunner(s, { type: "set_mode", mode });
+      // A mode (Claude's naming) sets both the SDK permissionMode (plan/default) and which tool
+      // categories canUseTool runs without asking. Apply both to the runner.
+      const mode = normalizeMode(body.mode);
+      const permissionMode = MODES[mode].permissionMode;
+      const categories = MODES[mode].approve.slice();
+      s.mode = mode;
+      s.permissionMode = permissionMode; // optimistic; runner echoes "mode"
+      s.autoApprove = categories;
+      const ok = writeToRunner(s, { type: "set_mode", mode: permissionMode });
+      writeToRunner(s, { type: "set_auto_approve", categories });
+      // Release any approval already waiting whose category is now auto-approved.
+      const allow = new Set(categories);
+      for (const [id, appr] of s.pendingApprovals) {
+        if (allow.has(toolCategory(appr.tool))) {
+          s.pendingApprovals.delete(id);
+          writeToRunner(s, { type: "approval", id, decision: "allow" });
+        }
+      }
+      sendJson(res, 200, { ok });
+    } else if (verb === "set-effort") {
+      const effort = body.effort ? String(body.effort) : null;
+      s.effort = effort; // optimistic; runner echoes "effort"
+      const ok = writeToRunner(s, { type: "set_effort", effort });
+      sendJson(res, 200, { ok });
+    } else if (verb === "set-thinking") {
+      const thinking = body.thinking === "off" ? "off" : "adaptive";
+      s.thinking = thinking; // optimistic; runner echoes "thinking"
+      const ok = writeToRunner(s, { type: "set_thinking", thinking });
       sendJson(res, 200, { ok });
     } else if (verb === "set-auto-approve") {
       const categories = Array.isArray(body.categories) ? body.categories.map(String) : [];

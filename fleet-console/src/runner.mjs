@@ -52,9 +52,20 @@ let approvalCounter = 0;
 // this, a canUseTool callback overrides permissionMode and prompts for every tool.
 let currentMode = config.permissionMode || "default"; // for the SDK (plan vs default)
 
-// Per-category auto-approve toggles the user controls (checkboxes). A tool whose category is in
-// this set runs without asking; otherwise canUseTool prompts the UI. Read-only tools always run.
+// Per-category auto-approve (derived from the chosen permission mode in the orchestrator). A tool
+// whose category is in this set runs without asking; otherwise canUseTool prompts. Reads always run.
 let autoApprove = new Set(Array.isArray(config.autoApprove) ? config.autoApprove : []);
+
+// Reasoning effort + extended thinking (live-changeable). effort guides how much the model reasons;
+// thinking is adaptive (model decides) or off. Tracked so we can echo current state to the UI.
+let currentEffort = config.effort || null; // 'low'|'medium'|'high'|'xhigh'|'max'|null(default)
+let currentThinking = config.thinking || "adaptive"; // 'adaptive' | 'off'
+
+/** Map our thinking choice to the SDK's ThinkingConfig for query() options. */
+function thinkingConfig(choice) {
+  if (choice === "off") return { type: "disabled" };
+  return { type: "adaptive" };
+}
 const EDIT_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit", "Update", "Create", "ApplyPatch"]);
 const READ_TOOLS = new Set(["Read", "Grep", "Glob", "LS", "NotebookRead", "TodoWrite"]);
 const SHELL_TOOLS = new Set(["Bash", "BashOutput", "KillShell", "KillBash"]);
@@ -238,6 +249,32 @@ rl.on("line", (line) => {
           .catch((e) => emit({ type: "log", level: "warn", message: `set model failed: ${e}` }));
       }
       break;
+    case "set_effort": {
+      // Reasoning effort, applied to subsequent turns via the SDK's flag-settings control request.
+      currentEffort = cmd.effort ? String(cmd.effort) : null;
+      if (sdkSession && typeof sdkSession.applyFlagSettings === "function") {
+        sdkSession
+          .applyFlagSettings({ effort: currentEffort })
+          .then(() => emit({ type: "effort", effort: currentEffort }))
+          .catch((e) => emit({ type: "log", level: "warn", message: `set effort failed: ${e}` }));
+      } else {
+        emit({ type: "effort", effort: currentEffort });
+      }
+      break;
+    }
+    case "set_thinking": {
+      // Extended thinking on (adaptive) / off, applied live via setMaxThinkingTokens (0 = off).
+      currentThinking = cmd.thinking === "off" ? "off" : "adaptive";
+      if (sdkSession && typeof sdkSession.setMaxThinkingTokens === "function") {
+        sdkSession
+          .setMaxThinkingTokens(currentThinking === "off" ? 0 : null)
+          .then(() => emit({ type: "thinking", thinking: currentThinking }))
+          .catch((e) => emit({ type: "log", level: "warn", message: `set thinking failed: ${e}` }));
+      } else {
+        emit({ type: "thinking", thinking: currentThinking });
+      }
+      break;
+    }
     case "interrupt":
       // Stop the current turn but keep the session alive so the user can keep chatting.
       if (sdkSession && typeof sdkSession.interrupt === "function") {
@@ -279,6 +316,10 @@ async function main() {
       append: config.systemPromptAppend || "",
     },
   };
+  // Reasoning effort + extended thinking. effort guides reasoning depth on models that support it;
+  // thinking is adaptive (model decides) unless turned off.
+  if (currentEffort) options.effort = currentEffort;
+  options.thinking = thinkingConfig(currentThinking);
   // canUseTool is our single permission authority for every session — it auto-approves the
   // categories the user toggled (and read-only tools) and prompts for the rest. This is what makes
   // "auto-approve shell" actually let Bash/git run (the SDK's permissionMode only covers edits).
@@ -321,6 +362,8 @@ async function main() {
     emit({ type: "model", model: config.model || null });
     emit({ type: "auto_approve", categories: [...autoApprove] });
     emit({ type: "browser", enabled: browserEnabled });
+    emit({ type: "effort", effort: currentEffort });
+    emit({ type: "thinking", thinking: currentThinking });
     let lastSessionId = null;
     for await (const message of session) {
       detectRateLimit(message);

@@ -95,10 +95,28 @@
       <label id="f-repos-row" class="hidden">Repository <select id="f-repos"></select></label>
       <label>Working directory <input id="f-cwd" placeholder="E:/GitHub/app  (or /home/user/app for WSL)" /></label>
       <label>Model <input id="f-model" placeholder="(blank = plan default)" /></label>
-      <label>Policy
-        <select id="f-policy">
-          <option value="auto">auto — runs unattended (walk-away, auto-continue)</option>
-          <option value="ask">ask — prompts you to approve each tool</option>
+      <label>Mode
+        <select id="f-mode">
+          <option value="bypassPermissions">Auto (full access) — runs everything unattended</option>
+          <option value="acceptEdits">Auto-accept edits — edits run, commands ask</option>
+          <option value="default">Ask before edits — prompts you to approve</option>
+          <option value="plan">Plan (read-only) — plans, no changes</option>
+        </select>
+      </label>
+      <label>Reasoning effort
+        <select id="f-effort">
+          <option value="">Default</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+          <option value="xhigh">Extra high</option>
+          <option value="max">Max</option>
+        </select>
+      </label>
+      <label>Extended thinking
+        <select id="f-thinking">
+          <option value="adaptive">Adaptive (default)</option>
+          <option value="off">Off</option>
         </select>
       </label>
       <label class="check-row"><input type="checkbox" id="f-browser" /> Enable browser tools (Playwright) for UI testing</label>

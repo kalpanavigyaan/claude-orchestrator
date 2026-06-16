@@ -87,9 +87,9 @@ is set, open the UI as `/?token=<token>` — it is sent on every API/SSE call.
   showing connection + what the agent is doing with a live elapsed timer.
 - **Right sidebar** (always visible, two tabs) —
   - **Controls** — global actions (New session, History, Continue all, Set reset) plus the
-    selected session's **auto‑approve checkboxes** (File edits / Shell / Other), a **Browser
-    (Playwright)** toggle for UI testing, **mode** and **model** dropdowns, and per‑session
-    actions (Instructions, Stop, Continue, Restart, End). A past session shows a **Resume** button.
+    selected session's **Mode**, **Model**, **Reasoning effort**, **Extended thinking**, and a
+    **Browser (Playwright)** toggle for UI testing, then per‑session actions (Instructions, Stop,
+    Continue, Restart, End). A past session shows a **Resume** button.
   - **Commands** — the slash commands the SDK reports; click one to insert it into the chat.
 
 ## Create a session
@@ -103,20 +103,26 @@ Click **＋ New session**:
 - **Working directory** — Windows path for local (`E:/GitHub/app`), or a native Linux path for
   WSL (`/home/you/app`). WSL cwd is native inside the distro, so there is no UNC‑path problem.
 - **Model** — blank uses your plan default (switchable later from Controls).
-- **Policy:** `auto` runs unattended (`acceptEdits`, good for the 5‑hour auto‑continue while you
-  sleep) · `ask` pops an **approval modal** for every tool call.
+- **Mode** — Claude's permission modes: **Auto (full access)** runs everything unattended (good for
+  the 5‑hour auto‑continue while you sleep) · **Auto‑accept edits** runs edits but asks before
+  commands · **Ask before edits** prompts you to approve each tool · **Plan (read‑only)** plans
+  without changing anything. Read‑only tools always run.
+- **Reasoning effort** — Default / Low / Medium / High / Extra high / Max (on models that support
+  it, e.g. Opus 4.x). Higher = more thinking, slower.
+- **Extended thinking** — Adaptive (Claude decides how much to think) or Off.
 - **Initial prompt** — the task to start with.
 
 Type to steer at any time. You can also start a session by clicking a **WSL distro** or a
 **repository** in the left sidebar.
 
-## Switching mode and model on the fly
+## Switching mode, model, effort and thinking on the fly
 
-In the **Controls** tab, the **mode** (Normal / Plan) and **model** dropdowns apply to the running
-session live (via the SDK's `setPermissionMode()` / `setModel()`) — no restart, conversation
-context preserved. Tool execution is governed by the **auto‑approve checkboxes**, not the mode:
-read‑only tools always run, and each checked category (File edits / Shell / Other) runs without
-asking — uncheck one to get an approval prompt for it instead. New sessions start with all three on.
+In the **Controls** tab, the **Mode**, **Model**, **Reasoning effort** and **Extended thinking**
+dropdowns apply to the running session live — no restart, conversation context preserved (via the
+SDK's `setPermissionMode()` / `setModel()` / `applyFlagSettings()` / `setMaxThinkingTokens()`).
+The Mode is the single permission control: it sets both the SDK permission mode and which tool
+categories run without asking. **Plan** is read‑only; **Ask before edits** prompts via an approval
+modal; **Auto‑accept edits** runs edits but asks for commands; **Auto** runs everything.
 
 ## Browser / UI testing
 

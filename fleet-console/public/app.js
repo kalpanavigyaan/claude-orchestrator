@@ -595,14 +595,25 @@ function updateComposer() {
       : "Create or select a session to chat";
 }
 
+// Permission modes use Claude's own naming. Each is a preset over what runs without asking.
 const MODE_OPTIONS = [
-  { value: "default", label: "Normal" },
+  { value: "default", label: "Ask before edits" },
+  { value: "acceptEdits", label: "Auto-accept edits" },
   { value: "plan", label: "Plan (read-only)" },
+  { value: "bypassPermissions", label: "Auto (full access)" },
 ];
-const AUTO_APPROVE_OPTIONS = [
-  { key: "edits", label: "File edits" },
-  { key: "shell", label: "Shell commands (bash, git, …)" },
-  { key: "other", label: "Other tools (web, etc.)" },
+// Reasoning effort + extended thinking (models that support it; Opus 4.x do).
+const EFFORT_OPTIONS = [
+  { value: "", label: "Default" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "Extra high" },
+  { value: "max", label: "Max" },
+];
+const THINKING_OPTIONS = [
+  { value: "adaptive", label: "Adaptive (default)" },
+  { value: "off", label: "Off" },
 ];
 
 function renderChatHeader(s) {
@@ -621,7 +632,7 @@ function renderControls(s) {
   const models = (latest && latest.models) || [];
   // Stable signature so the inputs don't reset on every poll; covers all three states.
   const sig = s
-    ? "live|" + [s.id, s.status, s.permissionMode, s.model, models.length, (s.autoApprove || []).join(","), s.browser ? 1 : 0].join("|")
+    ? "live|" + [s.id, s.status, s.mode, s.model, models.length, s.effort || "", s.thinking || "", s.browser ? 1 : 0].join("|")
     : viewingRel
       ? "past|" + viewingRel
       : "none";
@@ -649,29 +660,29 @@ function renderControls(s) {
     return;
   }
 
-  const modeOpts = MODE_OPTIONS.map(
-    (m) => `<option value="${m.value}" ${m.value === (s.permissionMode || "default") ? "selected" : ""}>${escapeHtml(m.label)}</option>`
-  ).join("");
+  const selOpts = (opts, cur) =>
+    opts.map((o) => `<option value="${escapeHtml(o.value)}" ${o.value === cur ? "selected" : ""}>${escapeHtml(o.label)}</option>`).join("");
+  const modeOpts = selOpts(MODE_OPTIONS, s.mode || "default");
+  const effortOpts = selOpts(EFFORT_OPTIONS, s.effort || "");
+  const thinkingOpts = selOpts(THINKING_OPTIONS, s.thinking || "adaptive");
   let modelOpts = `<option value="" ${!s.model ? "selected" : ""}>Default</option>`;
   for (const m of models) {
     modelOpts += `<option value="${escapeHtml(m.value)}" ${m.value === s.model ? "selected" : ""}>${escapeHtml(m.displayName || m.value)}</option>`;
   }
-  const approved = new Set(s.autoApprove || []);
-  const approveBoxes = AUTO_APPROVE_OPTIONS.map(
-    (o) => `<label class="rb-check"><input type="checkbox" class="ctl-auto" value="${o.key}" ${approved.has(o.key) ? "checked" : ""}/> ${escapeHtml(o.label)}</label>`
-  ).join("");
   rbControlsEl.innerHTML =
     `<div class="rb-section">
-       <label class="rb-label">✅ Auto-approve without asking</label>
-       ${approveBoxes}
-       <div class="rb-note">Unchecked tools pop an approval prompt. Read-only tools always run.</div>
+       <label class="rb-label">🛡 Mode</label>
+       <select id="ctl-mode" class="hdr-select">${modeOpts}</select>
+       <div class="rb-note">Ask before edits · Auto-accept edits · Plan (read-only) · Auto (runs everything). Reads always run.</div>
+       <label class="rb-label">🧠 Model</label>
+       <select id="ctl-model" class="hdr-select">${modelOpts}</select>
+       <label class="rb-label">🎚 Reasoning effort</label>
+       <select id="ctl-effort" class="hdr-select">${effortOpts}</select>
+       <label class="rb-label">💭 Extended thinking</label>
+       <select id="ctl-thinking" class="hdr-select">${thinkingOpts}</select>
        <label class="rb-label">🌐 Browser (UI testing)</label>
        <label class="rb-check"><input type="checkbox" id="ctl-browser" ${s.browser ? "checked" : ""}/> Enable Playwright browser tools</label>
        <div class="rb-note">Lets Claude navigate, click, type & screenshot a real browser. First use may take a few seconds to start.</div>
-       <label class="rb-label">⚙ Mode</label>
-       <select id="ctl-mode" class="hdr-select">${modeOpts}</select>
-       <label class="rb-label">🧠 Model</label>
-       <select id="ctl-model" class="hdr-select">${modelOpts}</select>
      </div>
      <div class="rb-actions">
        <button id="ctl-instr">📄 Instructions</button>
@@ -680,13 +691,6 @@ function renderControls(s) {
        <button id="ctl-restart">🔄 Restart runner</button>
        <button id="ctl-end" class="rb-end">⏏ End session</button>
      </div>`;
-  for (const box of rbControlsEl.querySelectorAll(".ctl-auto")) {
-    box.addEventListener("change", async () => {
-      const categories = [...rbControlsEl.querySelectorAll(".ctl-auto")].filter((b) => b.checked).map((b) => b.value);
-      await api(`/api/sessions/${s.id}/set-auto-approve`, { categories });
-      pollFleet();
-    });
-  }
   el("ctl-browser").addEventListener("change", async (e) => {
     await api(`/api/sessions/${s.id}/set-browser`, { enabled: e.target.checked });
     pollFleet();
@@ -697,6 +701,14 @@ function renderControls(s) {
   });
   el("ctl-model").addEventListener("change", async (e) => {
     await api(`/api/sessions/${s.id}/set-model`, { model: e.target.value });
+    pollFleet();
+  });
+  el("ctl-effort").addEventListener("change", async (e) => {
+    await api(`/api/sessions/${s.id}/set-effort`, { effort: e.target.value });
+    pollFleet();
+  });
+  el("ctl-thinking").addEventListener("change", async (e) => {
+    await api(`/api/sessions/${s.id}/set-thinking`, { thinking: e.target.value });
     pollFleet();
   });
   el("ctl-instr").addEventListener("click", () => openInstructions(s.id));
@@ -1221,7 +1233,9 @@ el("f-create").addEventListener("click", async () => {
     distro: el("f-distro").value.trim(),
     cwd: el("f-cwd").value.trim(),
     model: el("f-model").value.trim(),
-    policy: el("f-policy").value,
+    mode: el("f-mode").value,
+    effort: el("f-effort").value,
+    thinking: el("f-thinking").value,
     browser: el("f-browser").checked,
     initialPrompt: el("f-prompt").value,
   };
