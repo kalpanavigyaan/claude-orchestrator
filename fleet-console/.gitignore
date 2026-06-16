@@ -3,3 +3,4 @@ package-lock.json
 sessions/
 wsl-runners.json
 config/config.yaml
+.playwright-mcp/
