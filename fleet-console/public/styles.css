@@ -304,6 +304,10 @@ details[open] > .tree-summary::before { transform: rotate(90deg); }
 }
 .modal label.check-row { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 13px; cursor: pointer; }
 .modal label.check-row input { width: 15px; height: 15px; margin-top: 0; accent-color: var(--accent); cursor: pointer; }
+.sb-build { margin-left: auto; color: var(--muted); font-size: 11px; opacity: .7; }
+.stale-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 9999; background: var(--red, #b91c1c); color: #fff;
+  padding: 9px 14px; text-align: center; font-size: 13px; font-weight: 600; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.4); }
+.stale-banner.hidden { display: none; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .instr-folder { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
 .instr-folder code { color: var(--text); word-break: break-all; }

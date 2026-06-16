@@ -229,9 +229,14 @@ function applyUsageReport(report) {
   }
 }
 
+// Bump on any public/ UI change. The client compares its own APP_BUILD to this and shows a
+// "you're running an old version, refresh" banner on mismatch — ends the "is my page stale?" guessing.
+const BUILD = "2026-06-16a";
+
 function fleetSnapshot() {
   return {
     now: now(),
+    build: BUILD,
     account: { resetAt: accountResetAt(), manualReset: manualAccountReset },
     usage: {
       windows: [...accountUsage.values()],

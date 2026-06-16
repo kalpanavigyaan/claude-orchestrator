@@ -9,6 +9,10 @@
 
 "use strict";
 
+// Must match orchestrator BUILD. If the server reports a different build, this page is running a
+// stale cached app.js — we show a banner so it's never a silent mystery. Bump both on UI changes.
+const APP_BUILD = "2026-06-16a";
+
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
 const tokenQuery = TOKEN ? `?token=${encodeURIComponent(TOKEN)}` : "";
 
@@ -1645,7 +1649,28 @@ function applyFleet(snapshot) {
   latest = snapshot;
   clockOffset = snapshot.now - Date.now();
   setConnected(true);
+  checkBuild(snapshot.build);
   renderFleet();
+}
+
+// Detect a stale cached app.js: if the server's build differs from ours, this page is running old
+// code. Show a sticky banner (click = reload) so it's obvious, instead of silently misbehaving.
+function checkBuild(serverBuild) {
+  if (!serverBuild || serverBuild === APP_BUILD) {
+    const b = el("stale-banner");
+    if (b) b.classList.add("hidden");
+    return;
+  }
+  let b = el("stale-banner");
+  if (!b) {
+    b = document.createElement("div");
+    b.id = "stale-banner";
+    b.className = "stale-banner";
+    b.addEventListener("click", () => location.reload());
+    document.body.appendChild(b);
+  }
+  b.textContent = `⚠ This page is running an OLD version (build ${APP_BUILD}); the server is ${serverBuild}. Click here, or press Ctrl+Shift+R, to load the update.`;
+  b.classList.remove("hidden");
 }
 
 function connectFleet() {
@@ -1684,6 +1709,8 @@ function tick() {
   }
 }
 
+if (el("sb-build")) el("sb-build").textContent = "build " + APP_BUILD;
+console.log("[fleet-console] UI build " + APP_BUILD);
 renderStatusBar();
 updateComposer();
 renderControls(null); // populate the always-visible Controls pane before the first poll
