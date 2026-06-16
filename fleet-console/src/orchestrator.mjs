@@ -875,6 +875,12 @@ function createSession(spec) {
   };
 
   sessions.set(id, session);
+  // Show the initial prompt in the conversation. It's delivered to the agent via runnerConfig, but
+  // the runner only echoes Claude's replies (never the user's own message), so record it here for
+  // display — otherwise a new session shows Claude's answer with no visible question.
+  if (spec.initialPrompt && String(spec.initialPrompt).trim()) {
+    recordMessage(session, { role: "user", text: String(spec.initialPrompt) });
+  }
   if (host === "wsl" && !wslReg) {
     recordMessage(session, {
       role: "system",
