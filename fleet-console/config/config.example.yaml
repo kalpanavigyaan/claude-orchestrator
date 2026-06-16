@@ -3,7 +3,7 @@
 # Copy this file to config.yaml and edit. Precedence (highest first):
 #   environment variable  >  config.yaml  >  config.example.yaml  >  built-in defaults
 # Environment overrides still work: HOST, PORT, FLEET_TOKEN, SESSIONS_DIR,
-# USAGE_POLL_SECONDS, CONTINUE_BUFFER_SECONDS, CONTINUE_MIN_INTERVAL_SECONDS.
+# USAGE_POLL_SECONDS, CONTINUE_BUFFER_SECONDS, CONTINUE_MIN_INTERVAL_SECONDS, FLEET_BROWSER.
 
 server:
   host: "127.0.0.1"        # bind interface; use 0.0.0.0 for laptop/iPad access on the LAN
@@ -24,3 +24,8 @@ continue:
 repos:
   localRoots: ["E:/GitHub"]  # Windows folders scanned for the Repositories panel (git repos + status)
   maxDepth: 3                # how deep under each root to look for repos
+
+browser:
+  enabled: false          # default for new sessions: attach the Playwright MCP browser toolset so
+                          # Claude can navigate/click/type/screenshot for UI testing. Toggle per
+                          # session in the Controls tab. Prereq: `npx playwright install chromium`.

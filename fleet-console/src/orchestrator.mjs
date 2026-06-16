@@ -155,6 +155,7 @@ function sessionSummary(s) {
     model: s.model || null,
     permissionMode: s.permissionMode || "default",
     autoApprove: s.autoApprove || [],
+    browser: !!s.browser,
     policy: s.policy,
     status: s.status,
     resetAt: s.resetAt,
@@ -269,6 +270,7 @@ function sessionRecordObject(s) {
     model: s.model || null,
     policy: s.policy,
     permissionMode: s.permissionMode,
+    browser: !!s.browser,
     sdkSessionId: s.sdkSessionId || null,
     status: s.status,
     createdAt: new Date(s.createdAt).toISOString(),
@@ -741,6 +743,8 @@ function createSession(spec) {
   const autoApprove = Array.isArray(spec.autoApprove)
     ? spec.autoApprove
     : ["edits", "shell", "other"];
+  // Browser / UI testing toolset (Playwright MCP). Per-session opt-in; default from config.
+  const browser = spec.browser != null ? !!spec.browser : !!(config.browser && config.browser.enabled);
   const host = spec.host === "wsl" ? "wsl" : "local";
   const label = spec.label || spec.cwd || id;
 
@@ -795,6 +799,7 @@ function createSession(spec) {
     systemPromptAppend: autonomyNote + instructionsNote,
     maxTurns: spec.maxTurns || undefined,
     autoApprove,
+    browser,
     // Resume a saved conversation: by SDK session id when known, else continue the most recent
     // conversation in this cwd (covers sessions created before ids were captured).
     resume: spec.resume || undefined,
@@ -812,6 +817,7 @@ function createSession(spec) {
     model: spec.model || null,
     permissionMode,
     autoApprove,
+    browser,
     policy,
     autoContinue: spec.autoContinue !== false,
     status: "starting",
@@ -886,6 +892,7 @@ function resumeSession(rel) {
     model: meta.model || "",
     permissionMode: meta.permissionMode || undefined,
     policy: meta.policy || "auto",
+    browser: meta.browser != null ? meta.browser : undefined,
     sessionDirOverride: dir,
     preload,
     sdkSessionId: meta.sdkSessionId || null,
@@ -1027,6 +1034,9 @@ function handleRunnerEvent(s, event) {
       if (Array.isArray(event.categories)) {
         s.autoApprove = event.categories;
       }
+      break;
+    case "browser":
+      s.browser = !!event.enabled;
       break;
     case "session_id":
       if (event.id && event.id !== s.sdkSessionId) {
@@ -1388,6 +1398,12 @@ const server = http.createServer(async (req, res) => {
           writeToRunner(s, { type: "approval", id, decision: "allow" });
         }
       }
+      sendJson(res, 200, { ok });
+    } else if (verb === "set-browser") {
+      // Attach/detach the Playwright browser toolset for UI testing (runner echoes "browser").
+      const enabled = !!body.enabled;
+      s.browser = enabled; // optimistic
+      const ok = writeToRunner(s, { type: "set_browser", enabled });
       sendJson(res, 200, { ok });
     } else if (verb === "set-model") {
       const model = body.model ? String(body.model) : null;

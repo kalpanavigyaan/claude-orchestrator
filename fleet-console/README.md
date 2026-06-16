@@ -63,10 +63,12 @@ sessions: { dir: "E:/Sessions/Claude" }                   # where session folder
 usage:    { pollSeconds: 5 }                              # how often account usage is refreshed
 continue: { bufferSeconds: 30, minIntervalSeconds: 300 } # 5-hour auto-continue timing
 repos:    { localRoots: ["E:/GitHub"], maxDepth: 3 }     # scanned for the Repositories panel
+browser:  { enabled: false }                             # default Playwright browser toolset on/off
 ```
 
 Env overrides (for scripts/CI): `HOST`, `PORT`, `FLEET_TOKEN`, `SESSIONS_DIR`,
-`USAGE_POLL_SECONDS`, `CONTINUE_BUFFER_SECONDS`, `CONTINUE_MIN_INTERVAL_SECONDS`. When a token
+`USAGE_POLL_SECONDS`, `CONTINUE_BUFFER_SECONDS`, `CONTINUE_MIN_INTERVAL_SECONDS`, `FLEET_BROWSER`.
+When a token
 is set, open the UI as `/?token=<token>` — it is sent on every API/SSE call.
 
 ## The UI
@@ -85,8 +87,9 @@ is set, open the UI as `/?token=<token>` — it is sent on every API/SSE call.
   showing connection + what the agent is doing with a live elapsed timer.
 - **Right sidebar** (always visible, two tabs) —
   - **Controls** — global actions (New session, History, Continue all, Set reset) plus the
-    selected session's **permission‑mode** and **model** dropdowns and per‑session actions
-    (Instructions, Stop, Continue, Restart, End). A past session shows a **Resume** button.
+    selected session's **auto‑approve checkboxes** (File edits / Shell / Other), a **Browser
+    (Playwright)** toggle for UI testing, **mode** and **model** dropdowns, and per‑session
+    actions (Instructions, Stop, Continue, Restart, End). A past session shows a **Resume** button.
   - **Commands** — the slash commands the SDK reports; click one to insert it into the chat.
 
 ## Create a session
@@ -109,9 +112,26 @@ Type to steer at any time. You can also start a session by clicking a **WSL dist
 
 ## Switching mode and model on the fly
 
-In the **Controls** tab, the **permission mode** (Default / Plan / Auto‑accept edits / Full auto)
-and **model** dropdowns apply to the running session live (via the SDK's `setPermissionMode()` /
-`setModel()`) — no restart, conversation context preserved.
+In the **Controls** tab, the **mode** (Normal / Plan) and **model** dropdowns apply to the running
+session live (via the SDK's `setPermissionMode()` / `setModel()`) — no restart, conversation
+context preserved. Tool execution is governed by the **auto‑approve checkboxes**, not the mode:
+read‑only tools always run, and each checked category (File edits / Shell / Other) runs without
+asking — uncheck one to get an approval prompt for it instead. New sessions start with all three on.
+
+## Browser / UI testing
+
+Toggle **🌐 Browser (UI testing)** in Controls (or tick **Enable browser tools** when creating a
+session) to attach Microsoft's [Playwright MCP](https://github.com/microsoft/playwright-mcp)
+server. Claude gains `browser_navigate`, `browser_click`, `browser_type`, `browser_snapshot`, and
+`browser_take_screenshot`, so it can drive a real browser to test any web UI — including this app.
+The toggle attaches/detaches the toolset live (`setMcpServers()`), no restart needed.
+
+- **One‑time prereq:** install the browser binary where the runner runs —
+  `npx playwright install chromium` (run it inside the WSL distro for WSL sessions).
+- It runs **headed on Windows** (you can watch Claude click around) and **headless elsewhere**
+  (e.g. WSL has no display). First use after enabling may take a few seconds while `npx` fetches
+  `@playwright/mcp`. Browser tools fall in the **Other** auto‑approve category (on by default).
+- Default for new sessions is set by `browser.enabled` in the config (or the `FLEET_BROWSER` env).
 
 ## Stop vs End
 

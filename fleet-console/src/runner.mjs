@@ -67,6 +67,23 @@ function toolCategory(name) {
   return "other";
 }
 
+// Browser / UI testing: when enabled, attach Microsoft's Playwright MCP server so Claude gains
+// browser tools (mcp__playwright__browser_navigate/click/type/snapshot/screenshot). Toggleable
+// mid-session via setMcpServers(). Headed on Windows so you can watch; headless elsewhere (e.g. WSL
+// has no display). Loading is non-blocking (SDK default): the first browser use may pause a moment
+// while `npx` fetches @playwright/mcp on a cold start; Claude finds the tools via tool search.
+let browserEnabled = !!config.browser;
+function browserServers() {
+  const isWin = process.platform === "win32";
+  const args = ["-y", "@playwright/mcp@latest"];
+  if (!isWin) args.push("--headless");
+  return {
+    playwright: isWin
+      ? { command: "cmd", args: ["/c", "npx", ...args] }
+      : { command: "npx", args },
+  };
+}
+
 function emit(event) {
   process.stdout.write(JSON.stringify(event) + "\n");
 }
@@ -189,6 +206,18 @@ rl.on("line", (line) => {
       autoApprove = new Set(Array.isArray(cmd.categories) ? cmd.categories : []);
       emit({ type: "auto_approve", categories: [...autoApprove] });
       break;
+    case "set_browser":
+      // Attach/detach the Playwright browser toolset mid-session via setMcpServers().
+      browserEnabled = !!cmd.enabled;
+      if (sdkSession && typeof sdkSession.setMcpServers === "function") {
+        sdkSession
+          .setMcpServers(browserEnabled ? browserServers() : {})
+          .then(() => emit({ type: "browser", enabled: browserEnabled }))
+          .catch((e) => emit({ type: "log", level: "warn", message: `set browser failed: ${e}` }));
+      } else {
+        emit({ type: "browser", enabled: browserEnabled });
+      }
+      break;
     case "set_mode": {
       const mode = String(cmd.mode || "default");
       currentMode = mode; // SDK plan vs default
@@ -254,6 +283,10 @@ async function main() {
   // categories the user toggled (and read-only tools) and prompts for the rest. This is what makes
   // "auto-approve shell" actually let Bash/git run (the SDK's permissionMode only covers edits).
   options.canUseTool = canUseTool;
+  // Attach the browser toolset if this session opted in (see browserServers).
+  if (browserEnabled) {
+    options.mcpServers = browserServers();
+  }
   // Resume a saved conversation: by session id when known, else continue the most recent
   // conversation in this cwd (mutually exclusive).
   if (config.resume) {
@@ -287,6 +320,7 @@ async function main() {
     emit({ type: "mode", mode: config.permissionMode || "default" });
     emit({ type: "model", model: config.model || null });
     emit({ type: "auto_approve", categories: [...autoApprove] });
+    emit({ type: "browser", enabled: browserEnabled });
     let lastSessionId = null;
     for await (const message of session) {
       detectRateLimit(message);

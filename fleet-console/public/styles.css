@@ -302,6 +302,8 @@ details[open] > .tree-summary::before { transform: rotate(90deg); }
   width: 100%; margin-top: 4px; background: var(--panel-2); color: var(--text);
   border: 1px solid var(--border); border-radius: 10px; padding: 9px; font-size: 14px; font-family: inherit;
 }
+.modal label.check-row { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 13px; cursor: pointer; }
+.modal label.check-row input { width: 15px; height: 15px; margin-top: 0; accent-color: var(--accent); cursor: pointer; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .instr-folder { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
 .instr-folder code { color: var(--text); word-break: break-all; }

@@ -617,7 +617,7 @@ function renderControls(s) {
   const models = (latest && latest.models) || [];
   // Stable signature so the inputs don't reset on every poll; covers all three states.
   const sig = s
-    ? "live|" + [s.id, s.status, s.permissionMode, s.model, models.length, (s.autoApprove || []).join(",")].join("|")
+    ? "live|" + [s.id, s.status, s.permissionMode, s.model, models.length, (s.autoApprove || []).join(","), s.browser ? 1 : 0].join("|")
     : viewingRel
       ? "past|" + viewingRel
       : "none";
@@ -661,6 +661,9 @@ function renderControls(s) {
        <label class="rb-label">✅ Auto-approve without asking</label>
        ${approveBoxes}
        <div class="rb-note">Unchecked tools pop an approval prompt. Read-only tools always run.</div>
+       <label class="rb-label">🌐 Browser (UI testing)</label>
+       <label class="rb-check"><input type="checkbox" id="ctl-browser" ${s.browser ? "checked" : ""}/> Enable Playwright browser tools</label>
+       <div class="rb-note">Lets Claude navigate, click, type & screenshot a real browser. First use may take a few seconds to start.</div>
        <label class="rb-label">⚙ Mode</label>
        <select id="ctl-mode" class="hdr-select">${modeOpts}</select>
        <label class="rb-label">🧠 Model</label>
@@ -680,6 +683,10 @@ function renderControls(s) {
       pollFleet();
     });
   }
+  el("ctl-browser").addEventListener("change", async (e) => {
+    await api(`/api/sessions/${s.id}/set-browser`, { enabled: e.target.checked });
+    pollFleet();
+  });
   el("ctl-mode").addEventListener("change", async (e) => {
     await api(`/api/sessions/${s.id}/set-mode`, { mode: e.target.value });
     pollFleet();
@@ -1194,6 +1201,7 @@ el("f-create").addEventListener("click", async () => {
     cwd: el("f-cwd").value.trim(),
     model: el("f-model").value.trim(),
     policy: el("f-policy").value,
+    browser: el("f-browser").checked,
     initialPrompt: el("f-prompt").value,
   };
   if (!spec.cwd) { alert("Working directory is required."); return; }
