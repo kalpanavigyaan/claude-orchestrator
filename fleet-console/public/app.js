@@ -45,10 +45,14 @@ function api(path, body) {
   }).then((r) => r.json().catch(() => ({}))).catch(() => ({}));
 }
 
-function getJson(path) {
-  return fetch(path, { headers: { "x-fleet-token": TOKEN } })
+function getJson(path, timeoutMs) {
+  // Optional timeout so a hung request can't permanently block the coalesced sync loop.
+  const ctrl = timeoutMs ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+  return fetch(path, { headers: { "x-fleet-token": TOKEN }, signal: ctrl ? ctrl.signal : undefined })
     .then((r) => (r.ok ? r.json() : null))
-    .catch(() => null);
+    .catch(() => null)
+    .finally(() => { if (timer) clearTimeout(timer); });
 }
 
 function serverNow() {
@@ -810,42 +814,60 @@ function selectSession(id) {
   try {
     sessionES = new EventSource(`/api/sessions/${id}/events${tokenQuery}`);
     sessionES.onmessage = () => syncSession(id);
+    // On a dropped SSE (flaky link), the 1.5s poll keeps the conversation live until EventSource
+    // auto-reconnects (its reconnect replays the backlog and resyncs).
+    sessionES.onerror = () => syncSession(id);
   } catch {
     /* polling covers it */
   }
 }
 
-// The 1.5s poll and the SSE event both call syncSession. We use a generation counter instead of a
-// boolean lock: every call bumps syncGen, and a response is applied only if it's still the latest
-// request. This drops stale out-of-order responses (so an older snapshot can't clobber the view)
-// AND can never wedge — a stalled fetch just becomes stale when the next poll fires, so live
-// updates keep flowing (a boolean "in-flight" lock here would freeze the chat until a page reload
-// if a single request ever hung). renderedCount advances per appended item, so re-entrant calls are
-// idempotent. The duplicate-response bug is handled in appendMessage (assistant-vs-result skip).
-let syncGen = 0;
+// The 1.5s poll and the per-session SSE both call syncSession. The SSE fires once per server message,
+// so during a turn there's a BURST of calls. We must COALESCE them, not race them: keep at most one
+// fetch in flight and one queued re-run. A "newest-started-wins" generation race fails here — on a
+// slow link each GET takes longer than the gap between SSE events, so every sync is superseded by the
+// next event and dropped, freezing the chat mid-turn until a reload. Coalescing avoids that: each
+// fetch returns the FULL latest s.messages, so the single trailing re-run always converges to current
+// state. getJson has a timeout so a genuinely hung request can't wedge the lock (and the 1.5s poll is
+// an extra backstop). renderedCount advances per item; duplicate result bubbles are skipped in
+// appendMessage.
+let syncing = false;
+let syncDirty = false;
 async function syncSession(id) {
   if (id !== selectedId) return;
-  const gen = ++syncGen;
-  const d = await getJson(`/api/sessions/${id}`);
-  if (gen !== syncGen) return; // a newer sync started/finished — ignore this stale response
-  if (id !== selectedId || !d || !Array.isArray(d.messages)) return;
-  if (d.messages.length < renderedCount) {
-    messagesEl.innerHTML = "";
-    renderedCount = 0;
+  if (syncing) {
+    syncDirty = true; // a sync is running; remember to re-run once with fresh data
+    return;
   }
-  while (renderedCount < d.messages.length) {
-    const m = d.messages[renderedCount];
-    renderedCount++; // advance first so one bad message can't wedge the loop
-    try {
-      appendMessage(m);
-    } catch (e) {
-      console.error("appendMessage failed", e);
+  syncing = true;
+  try {
+    const d = await getJson(`/api/sessions/${id}`, 6000);
+    if (id === selectedId && d && Array.isArray(d.messages)) {
+      if (d.messages.length < renderedCount) {
+        messagesEl.innerHTML = "";
+        renderedCount = 0;
+      }
+      while (renderedCount < d.messages.length) {
+        const m = d.messages[renderedCount];
+        renderedCount++; // advance first so one bad message can't wedge the loop
+        try {
+          appendMessage(m);
+        } catch (e) {
+          console.error("appendMessage failed", e);
+        }
+      }
+      for (const a of d.pendingApprovals || []) {
+        if (!seenApprovalIds.has(a.id)) {
+          seenApprovalIds.add(a.id);
+          enqueueApproval(a);
+        }
+      }
     }
-  }
-  for (const a of d.pendingApprovals || []) {
-    if (!seenApprovalIds.has(a.id)) {
-      seenApprovalIds.add(a.id);
-      enqueueApproval(a);
+  } finally {
+    syncing = false;
+    if (syncDirty && id === selectedId) {
+      syncDirty = false;
+      syncSession(id); // coalesced re-run picks up anything that arrived while we were fetching
     }
   }
 }
