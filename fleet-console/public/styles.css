@@ -232,6 +232,16 @@ details[open] > .tree-summary::before { transform: rotate(90deg); }
 .rb-actions button { width: 100%; }
 .rb-actions .rb-end { border-color: var(--red); color: var(--red); }
 .rb-actions .rb-stop { border-color: var(--amber); color: var(--amber); }
+.rb-dir-list { display: flex; flex-direction: column; gap: 3px; }
+.rb-dir-item { display: flex; align-items: center; gap: 6px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 12px; }
+.rb-dir-cwd { opacity: .7; }
+.rb-dir-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; color: var(--text); }
+.rb-dir-badge { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); border: 1px solid var(--accent); border-radius: 4px; padding: 0 4px; flex-shrink: 0; }
+.rb-dir-remove { background: transparent; border: none; color: var(--muted); cursor: pointer; padding: 0 2px; font-size: 13px; line-height: 1; min-height: auto; flex-shrink: 0; }
+.rb-dir-remove:hover { color: var(--red); }
+.rb-dir-add { display: flex; gap: 6px; margin-top: 4px; }
+.rb-dir-input { flex: 1; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 12px; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
+.rb-dir-add button { flex-shrink: 0; padding: 5px 12px; font-size: 12px; min-height: auto; }
 .rb-hint { padding: 16px 12px; color: var(--muted); font-size: 12px; }
 .cmd-filter { margin: 8px 10px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; font-size: 13px; }
 .cmd-list { flex: 1; overflow: auto; padding: 4px 8px 10px; }
