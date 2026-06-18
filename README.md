@@ -78,7 +78,7 @@ The working directory (`cwd`) is fixed for the session. All additional directori
 
 ### Works everywhere
 - **Local Windows**: Use Windows paths (`E:/GitHub/repo`)
-- **WSL sessions**: Use absolute paths (`/home/user/repo`)  
+- **WSL sessions**: Use absolute paths (`/home/user/repo`)
 - **Mixed**: One session on Windows, another in WSL — paths are adapted automatically
 
 ---

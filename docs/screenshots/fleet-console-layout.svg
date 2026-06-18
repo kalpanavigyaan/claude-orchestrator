@@ -1,18 +1,18 @@
 <svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
   <!-- Background -->
   <rect width="1200" height="800" fill="#0b1020"/>
-  
+
   <!-- Header -->
   <rect width="1200" height="50" fill="#1a2540"/>
   <text x="20" y="33" font-size="24" font-weight="bold" fill="#6ea8fe">fleet-console</text>
   <text x="320" y="33" font-size="14" fill="#8899aa">Session: my-project</text>
   <text x="800" y="33" font-size="12" fill="#6ea8fe">Account reset: 04:32:15</text>
-  
+
   <!-- Usage bar -->
   <rect x="20" y="55" width="1160" height="30" fill="#2a3f5f" stroke="#3a4f7f" stroke-width="1"/>
   <rect x="20" y="55" width="600" height="30" fill="#4a7fbf"/>
   <text x="30" y="75" font-size="12" fill="#fff">Usage: 62% · five_hour reset: 4h 32m</text>
-  
+
   <!-- Left sidebar -->
   <rect width="280" height="715" y="85" fill="#0a0f1a" stroke="#2a3f5f" stroke-width="1"/>
   <text x="15" y="110" font-size="12" font-weight="bold" fill="#8899aa" text-transform="uppercase">Sessions</text>
@@ -20,68 +20,68 @@
   <text x="25" y="142" font-size="13" fill="#6ea8fe">▸ my-project</text>
   <text x="25" y="165" font-size="11" fill="#6699cc">research-task</text>
   <text x="25" y="185" font-size="11" fill="#6699cc">data-processing</text>
-  
+
   <!-- Central chat area -->
   <rect x="280" y="85" width="640" height="715" fill="#0f1527" stroke="#2a3f5f" stroke-width="1"/>
-  
+
   <!-- Chat messages -->
   <text x="300" y="120" font-size="12" fill="#8899aa">Claude</text>
   <rect x="300" y="130" width="580" height="60" fill="#1a2f4f" stroke="#2a3f5f" stroke-width="1" rx="8"/>
   <text x="315" y="150" font-size="12" fill="#aabbdd">I can help you work on this project. I have access to:</text>
   <text x="315" y="170" font-size="11" fill="#6699cc">• /home/user/main-repo (cwd)</text>
   <text x="315" y="185" font-size="11" fill="#6699cc">• /home/user/lib-shared-utils</text>
-  
+
   <text x="500" y="230" font-size="12" fill="#8899aa">You</text>
   <rect x="400" y="240" width="380" height="50" fill="#2a5f9f" stroke="#3a6f9f" stroke-width="1" rx="8"/>
   <text x="415" y="260" font-size="12" fill="#fff">Add /home/user/analytics-lib as</text>
   <text x="415" y="278" font-size="12" fill="#fff">additional context for this task</text>
-  
+
   <!-- Right sidebar - Controls panel -->
   <rect x="920" y="85" width="280" height="715" fill="#0a0f1a" stroke="#2a3f5f" stroke-width="1"/>
   <text x="935" y="110" font-size="12" font-weight="bold" fill="#8899aa" text-transform="uppercase">Controls</text>
-  
+
   <!-- Mode selector -->
   <text x="935" y="140" font-size="10" fill="#6699cc" font-weight="bold">🛡 Mode</text>
   <rect x="935" y="150" width="240" height="28" fill="#1a2f4f" stroke="#2a3f5f" stroke-width="1" rx="4"/>
   <text x="945" y="170" font-size="11" fill="#aabbdd">Ask before edits</text>
-  
+
   <!-- Model selector -->
   <text x="935" y="200" font-size="10" fill="#6699cc" font-weight="bold">🧠 Model</text>
   <rect x="935" y="210" width="240" height="28" fill="#1a2f4f" stroke="#2a3f5f" stroke-width="1" rx="4"/>
   <text x="945" y="230" font-size="11" fill="#aabbdd">claude-opus-4</text>
-  
+
   <!-- Directories section (NEW FEATURE) -->
   <rect x="930" y="260" width="260" height="200" fill="#1a2a3f" stroke="#3a6f9f" stroke-width="2" rx="6"/>
   <text x="945" y="285" font-size="10" fill="#6ea8fe" font-weight="bold">📁 Directories (NEW)</text>
   <text x="945" y="305" font-size="9" fill="#6699cc">Working directory is fixed. Add extra repos Claude can read/edit.</text>
-  
+
   <!-- Directory list -->
   <rect x="945" y="325" width="240" height="28" fill="#0a1420" stroke="#3a4f5f" stroke-width="1" rx="3"/>
   <text x="955" y="343" font-size="10" fill="#aabbdd" font-family="monospace">/home/user/main-repo</text>
   <text x="1180" y="343" font-size="9" fill="#6699cc">cwd</text>
-  
+
   <rect x="945" y="360" width="240" height="28" fill="#0a1420" stroke="#3a4f5f" stroke-width="1" rx="3"/>
   <text x="955" y="378" font-size="10" fill="#aabbdd" font-family="monospace">/home/user/lib-shared</text>
   <text x="1195" y="378" font-size="9" fill="#ff6b6b">✕</text>
-  
+
   <rect x="945" y="395" width="240" height="28" fill="#0a1420" stroke="#3a4f5f" stroke-width="1" rx="3"/>
   <text x="955" y="413" font-size="10" fill="#aabbdd" font-family="monospace">/home/user/analytics-lib</text>
   <text x="1195" y="413" font-size="9" fill="#ff6b6b">✕</text>
-  
+
   <!-- Add directory input -->
   <rect x="945" y="430" width="180" height="24" fill="#0f1a2a" stroke="#2a3f5f" stroke-width="1" rx="3"/>
   <text x="955" y="445" font-size="10" fill="#6699cc" font-family="monospace">/path/to/repo</text>
-  
+
   <rect x="1135" y="430" width="50" height="24" fill="#2a5f9f" stroke="#3a6f9f" stroke-width="1" rx="3"/>
   <text x="1145" y="445" font-size="10" fill="#fff" font-weight="bold">Add</text>
-  
+
   <!-- Buttons -->
   <rect x="945" y="480" width="240" height="28" fill="#1a2f4f" stroke="#3a4f5f" stroke-width="1" rx="4"/>
   <text x="1035" y="500" font-size="11" fill="#aabbdd" font-weight="bold">📄 Instructions</text>
-  
+
   <rect x="945" y="520" width="240" height="28" fill="#1a2f4f" stroke="#3a4f5f" stroke-width="1" rx="4"/>
   <text x="1020" y="540" font-size="11" fill="#aabbdd" font-weight="bold">▶ Continue</text>
-  
+
   <!-- Legend -->
   <text x="20" y="780" font-size="10" fill="#6699cc">✨ New in this release: Multi-repo support • Mid-session directory additions • Per-repo access control</text>
 </svg>
