@@ -26,9 +26,17 @@
 .PARAMETER McpPort
     Override the MCP HTTP port (default 4319).
 
+.PARAMETER Tools
+    Which tools to expose to Claude (passed to the adapter as TOOL_SERVER_TOOLS).
+    Fewer tools = fewer schemas shipped in every request = lower token cost.
+      "" / "default"  curated high-leverage subset (recommended, the default)
+      "all"           every one of the 26 tools
+      "a,b,c"         exactly those tool names
+
 .EXAMPLE
     PS> .\scripts\start-tool-server.ps1
     PS> .\scripts\start-tool-server.ps1 -NoBuild -WithEmbeddings
+    PS> .\scripts\start-tool-server.ps1 -Tools "all"
 #>
 
 param(
@@ -36,7 +44,8 @@ param(
     [switch]$WithEmbeddings,
     [int]$GrpcPort = 50051,
     [int]$EmbPort  = 50052,
-    [int]$McpPort  = 4319
+    [int]$McpPort  = 4319,
+    [string]$Tools = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -157,6 +166,7 @@ $adapterProc = Start-Process -FilePath "node" `
         TOOL_SERVER_MCP_PORT   = "$McpPort"
         TOOL_SERVER_GRPC_ADDR  = "127.0.0.1:$GrpcPort"
         EMBEDDINGS_GRPC_ADDR   = "127.0.0.1:$EmbPort"
+        TOOL_SERVER_TOOLS      = "$Tools"
     }
 $adapterProc.Id | Set-Content (Join-Path $PidsDir "mcp-adapter.pid") -Encoding utf8
 

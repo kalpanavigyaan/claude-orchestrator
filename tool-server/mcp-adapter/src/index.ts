@@ -56,6 +56,42 @@ const server = new McpServer({
   version: "0.1.0",
 });
 
+// ─── Default-on tool selection ──────────────────────────────────────────────
+// Every registered tool ships its JSON schema in *every* request to Claude, so
+// loading all 26 tools has a fixed per-request token cost. By default we expose
+// a curated, high-leverage subset that always works without the embeddings
+// service. Override with the TOOL_SERVER_TOOLS env var:
+//   unset / "default"  → curated set below (recommended)
+//   "all"              → register every tool
+//   "a,b,c"            → register exactly those tool names
+const DEFAULT_TOOLS = [
+  "safr",            // router: pick the right strategy per file (no file read)
+  "chunkhound",      // split a file into function/class chunks
+  "region_extract",  // read just the enclosing function/region
+  "symbol_scope",    // definition + usages only
+  "tds",             // diff hunks ± context instead of whole files
+  "noise_filter",    // strip boilerplate before sending source
+  "log_dedup",       // collapse near-identical log lines
+  "stack_collapse",  // keep app frames, drop stdlib/vendor frames
+];
+const TOOLS_ENV = (process.env.TOOL_SERVER_TOOLS ?? "").trim().toLowerCase();
+const TOOL_ALLOW: Set<string> | null =
+  TOOLS_ENV === "all"
+    ? null
+    : new Set(
+        TOOLS_ENV === "" || TOOLS_ENV === "default"
+          ? DEFAULT_TOOLS
+          : TOOLS_ENV.split(",").map((s) => s.trim()).filter(Boolean),
+      );
+
+// Wrap server.tool so only allow-listed tools are registered (and announced to
+// the model). Filtered-out tools never reach the wire, saving schema tokens.
+const registerTool = server.tool.bind(server) as (...args: unknown[]) => unknown;
+server.tool = ((name: string, ...rest: unknown[]) => {
+  if (TOOL_ALLOW && !TOOL_ALLOW.has(name)) return undefined as never;
+  return registerTool(name, ...rest);
+}) as typeof server.tool;
+
 // ─── Token tools ────────────────────────────────────────────────────────────
 
 server.tool(
@@ -385,7 +421,8 @@ const httpServer = http.createServer(async (req, res) => {
 });
 
 httpServer.listen(MCP_PORT, "0.0.0.0", () => {
-  console.log(`[tool-server-mcp] HTTP MCP listening on :${MCP_PORT}  gRPC -> ${GRPC_ADDR}`);
+  const sel = TOOL_ALLOW ? `${TOOL_ALLOW.size} tools [${[...TOOL_ALLOW].join(", ")}]` : "all tools";
+  console.log(`[tool-server-mcp] HTTP MCP listening on :${MCP_PORT}  gRPC -> ${GRPC_ADDR}  | exposing ${sel}`);
 });
 
 process.on("SIGINT", () => {
