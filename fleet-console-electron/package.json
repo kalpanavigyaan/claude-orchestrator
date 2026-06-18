@@ -1,0 +1,31 @@
+{
+  "name": "fleet-console-electron",
+  "version": "1.0.0",
+  "description": "VS Code-like Electron UI for Fleet Console",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^32.3.3",
+    "electron-builder": "^24.0.0"
+  },
+  "build": {
+    "appId": "com.claudefleet.console",
+    "productName": "Fleet Console",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*"
+    ],
+    "win": {
+      "target": "portable"
+    }
+  }
+}

@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self' http://127.0.0.1:4318; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src http://127.0.0.1:4318 ws://127.0.0.1:4318" />
+  <title>Fleet Console</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════
+     TITLE BAR
+════════════════════════════════════════════════════════════ -->
+<div class="title-bar" id="title-bar">
+  <div class="title-bar-left">
+    <svg class="app-logo" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M8 1L14 4.5V11.5L8 15L2 11.5V4.5L8 1Z" stroke="#007acc" stroke-width="1.5" fill="none"/>
+      <circle cx="8" cy="8" r="2" fill="#007acc"/>
+    </svg>
+    <span class="title-bar-title">Fleet Console</span>
+  </div>
+  <div class="title-bar-drag"></div>
+  <div class="title-bar-right">
+    <span id="conn" class="conn-status offline" title="Connection status">offline</span>
+    <div class="window-controls">
+      <button class="wc-btn minimize" id="btn-minimize" title="Minimize">
+        <svg viewBox="0 0 10 1"><rect width="10" height="1" fill="currentColor"/></svg>
+      </button>
+      <button class="wc-btn maximize" id="btn-maximize" title="Maximize">
+        <svg viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" stroke="currentColor" fill="none"/></svg>
+      </button>
+      <button class="wc-btn close" id="btn-close" title="Close">
+        <svg viewBox="0 0 10 10">
+          <line x1="0" y1="0" x2="10" y2="10" stroke="currentColor" stroke-width="1.2"/>
+          <line x1="10" y1="0" x2="0" y2="10" stroke="currentColor" stroke-width="1.2"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     WORKBENCH  (activity bar + sidebar + editor)
+════════════════════════════════════════════════════════════ -->
+<div class="workbench">
+
+  <!-- ─── ACTIVITY BAR ─────────────────────────────────────── -->
+  <nav class="activity-bar" aria-label="Activity Bar">
+    <div class="ab-actions">
+      <button class="ab-action-btn" id="btn-new-session" title="New Session (Ctrl+N)">
+        <svg viewBox="0 0 16 16" fill="currentColor">
+          <path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <button class="ab-action-btn" id="btn-set-reset" title="Set Account Reset Time">
+        <svg viewBox="0 0 16 16" fill="currentColor">
+          <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2" fill="none"/>
+          <path d="M8 4v4l3 2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+    <div class="ab-bottom">
+      <button class="ab-action-btn ab-icon-usage" id="btn-toggle-usage" title="Usage Panel">
+        <svg viewBox="0 0 16 16" fill="currentColor">
+          <path d="M1 12L5 7l3 3 5-6" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <div class="ab-countdown" id="account-countdown" title="Account reset countdown">—</div>
+    </div>
+  </nav>
+
+  <!-- ─── SIDEBAR (accordion sections) ─────────────────────── -->
+  <div class="sidebar" id="sidebar">
+
+    <!-- Sessions -->
+    <div class="sb-section">
+      <div class="sb-section-header open" data-sec="sessions">
+        <span class="sb-section-icon">▶</span>
+        <span class="sb-section-title">Active Sessions</span>
+        <span class="ab-badge hidden" id="sessions-badge"></span>
+      </div>
+      <div class="sb-section-body open" id="sec-body-sessions">
+        <div id="sessions-list"></div>
+      </div>
+    </div>
+
+    <!-- History -->
+    <div class="sb-section">
+      <div class="sb-section-header" data-sec="history">
+        <span class="sb-section-icon">▶</span>
+        <span class="sb-section-title">Session History</span>
+        <div class="sb-section-actions">
+          <button class="panel-title-btn" id="btn-refresh-history" title="Refresh">↻</button>
+        </div>
+      </div>
+      <div class="sb-section-body" id="sec-body-history">
+        <input class="panel-filter" id="history-filter" placeholder="Filter sessions…" />
+        <div class="tree-view" id="history-tree"></div>
+      </div>
+    </div>
+
+    <!-- WSL Distros -->
+    <div class="sb-section">
+      <div class="sb-section-header" data-sec="wsl">
+        <span class="sb-section-icon">▶</span>
+        <span class="sb-section-title">WSL Distros</span>
+        <div class="sb-section-actions">
+          <button class="panel-title-btn" id="btn-refresh-wsl" title="Refresh">↻</button>
+        </div>
+      </div>
+      <div class="sb-section-body" id="sec-body-wsl">
+        <div id="wsl-list"></div>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="sb-section">
+      <div class="sb-section-header" data-sec="controls">
+        <span class="sb-section-icon">▶</span>
+        <span class="sb-section-title">Controls</span>
+      </div>
+      <div class="sb-section-body" id="sec-body-controls">
+        <div id="controls-content"></div>
+      </div>
+    </div>
+
+    <!-- Intelligence -->
+    <div class="sb-section">
+      <div class="sb-section-header" data-sec="intelligence">
+        <span class="sb-section-icon">▶</span>
+        <span class="sb-section-title">Intelligence</span>
+      </div>
+      <div class="sb-section-body" id="sec-body-intelligence">
+        <div id="intelligence-content"></div>
+      </div>
+    </div>
+
+    <!-- Commands -->
+    <div class="sb-section">
+      <div class="sb-section-header" data-sec="commands">
+        <span class="sb-section-icon">▶</span>
+        <span class="sb-section-title">Commands</span>
+      </div>
+      <div class="sb-section-body" id="sec-body-commands">
+        <input class="panel-filter" id="cmd-filter" placeholder="Filter commands…" />
+        <div id="cmd-list"></div>
+      </div>
+    </div>
+
+    <!-- Repositories -->
+    <div class="sb-section">
+      <div class="sb-section-header" data-sec="repos">
+        <span class="sb-section-icon">▶</span>
+        <span class="sb-section-title">Repositories</span>
+      </div>
+      <div class="sb-section-body" id="sec-body-repos">
+        <div class="tree-view repos-tree" id="repos-tree"></div>
+      </div>
+    </div>
+
+    <div class="sidebar-resize-handle" id="sidebar-resize"></div>
+  </div>
+
+  <!-- ─── EDITOR AREA ──────────────────────────────────────── -->
+  <div class="editor-area">
+
+    <!-- Tab bar -->
+    <div class="editor-tabs">
+      <div class="editor-tab active" id="tab-chat" data-view="chat">
+        <svg viewBox="0 0 14 14" fill="currentColor" style="width:12px;height:12px">
+          <path d="M2 2h10a1 1 0 011 1v6a1 1 0 01-1 1H8l-3 3v-3H2a1 1 0 01-1-1V3a1 1 0 011-1z"/>
+        </svg>
+        Chat
+      </div>
+    </div>
+
+    <!-- Chat view -->
+    <div class="chat-view" id="chat-view">
+      <div class="chat-header" id="chat-header">
+        <span class="chat-header-title" id="chat-title">Select or create a session</span>
+        <span class="chat-header-meta" id="chat-meta"></span>
+      </div>
+      <div class="messages" id="messages"></div>
+      <div id="working" class="working hidden">
+        <div class="working-status">
+          <span class="dots"><i></i><i></i><i></i></span>
+          <span id="working-text">Claude is working…</span>
+          <button id="working-stop" class="working-stop-btn" title="Stop current task (keeps session)">⏹ Stop</button>
+        </div>
+        <div id="working-cmd" class="working-cmd"></div>
+      </div>
+      <form id="composer" class="composer" autocomplete="off">
+        <textarea id="composer-input" rows="3"
+          placeholder="Message the agent… (Enter to send, Shift+Enter for newline)"></textarea>
+        <div class="composer-actions">
+          <button type="submit" class="btn-primary" id="btn-send">Send</button>
+        </div>
+      </form>
+    </div>
+
+  </div><!-- editor-area -->
+
+  <!-- ─── RIGHT PANEL (usage) ───────────────────────────────── -->
+  <div class="right-panel" id="right-panel">
+    <div class="right-panel-header">
+      <svg viewBox="0 0 14 14" fill="currentColor" style="width:11px;height:11px;flex-shrink:0">
+        <path d="M1 11L5 7l3 3 5-6" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+      </svg>
+      <span>Usage</span>
+      <button class="right-panel-close" id="btn-close-right-panel" title="Close">✕</button>
+    </div>
+    <div class="right-panel-body" id="right-panel-body">
+      <div class="rp-hint">Connect to see usage data…</div>
+    </div>
+  </div>
+</div><!-- workbench -->
+
+<!-- ═══════════════════════════════════════════════════════════
+     STATUS BAR
+════════════════════════════════════════════════════════════ -->
+<div class="status-bar">
+  <span class="sb-dot idle" id="sb-dot"></span>
+  <span id="sb-text">Connecting…</span>
+  <div class="sb-right" id="sb-right"></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     NEW SESSION MODAL
+════════════════════════════════════════════════════════════ -->
+<div id="new-modal" class="modal-overlay hidden">
+  <div class="modal" style="width:580px">
+    <h2>New Session</h2>
+    <label>Label <input id="f-label" placeholder="my-task" /></label>
+    <label>Host
+      <select id="f-host">
+        <option value="local">local (Windows host)</option>
+        <option value="wsl">wsl (distro)</option>
+      </select>
+    </label>
+    <label id="f-distro-row" class="hidden">WSL distro <select id="f-distro"></select></label>
+    <label id="f-repos-row" class="hidden">Repository <select id="f-repos"></select></label>
+    <label>Working directory <input id="f-cwd" placeholder="E:/GitHub/app  or  /home/user/app" /></label>
+    <label>Extra repos / directories
+      <textarea id="f-extra-dirs" rows="3" placeholder="One path per line — extra repos Claude can read and edit"></textarea>
+    </label>
+    <label>Model <input id="f-model" placeholder="(blank = plan default)" /></label>
+    <label>Mode
+      <select id="f-mode">
+        <option value="bypassPermissions">Auto (full access) — runs everything unattended</option>
+        <option value="acceptEdits">Auto-accept edits — edits run, commands ask</option>
+        <option value="default">Ask before edits — prompts you to approve</option>
+        <option value="plan">Plan (read-only) — plans, no changes</option>
+      </select>
+    </label>
+    <label>Reasoning effort
+      <select id="f-effort">
+        <option value="">Default</option>
+        <option value="low">Low</option>
+        <option value="medium">Medium</option>
+        <option value="high">High</option>
+        <option value="xhigh">Extra high</option>
+        <option value="max">Max</option>
+      </select>
+    </label>
+    <label>Extended thinking
+      <select id="f-thinking">
+        <option value="">Auto</option>
+        <option value="adaptive">Adaptive (always on)</option>
+        <option value="off">Off</option>
+      </select>
+    </label>
+    <label class="check-row"><input type="checkbox" id="f-browser" /> Enable browser tools (Playwright)</label>
+    <label class="check-row"><input type="checkbox" id="f-autocontinue" checked /> Auto-continue after 5-hour reset</label>
+    <label>Initial prompt <textarea id="f-prompt" rows="3" placeholder="What should this agent do?"></textarea></label>
+    <div class="modal-actions">
+      <button id="f-cancel" class="btn-secondary">Cancel</button>
+      <button id="f-create" class="btn-primary">Create Session</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     APPROVAL MODAL
+════════════════════════════════════════════════════════════ -->
+<div id="approval-modal" class="modal-overlay hidden">
+  <div class="modal" style="width:540px">
+    <h2>Tool Approval</h2>
+    <div id="approval-body" class="approval-body"></div>
+    <div class="modal-actions">
+      <button id="appr-deny" class="btn-secondary">Deny</button>
+      <button id="appr-allow" class="btn-primary">Allow</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     INSTRUCTIONS MODAL
+════════════════════════════════════════════════════════════ -->
+<div id="instr-modal" class="modal-overlay hidden">
+  <div class="modal" style="width:600px">
+    <h2>Session Instructions</h2>
+    <div class="instr-path" id="instr-folder"></div>
+    <div id="instr-list" class="instr-list"></div>
+    <div class="instr-add">
+      <input id="instr-name" placeholder="filename.md" style="width:200px" />
+      <textarea id="instr-content" rows="5" placeholder="Instruction content (markdown)…"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button id="instr-close" class="btn-secondary">Close</button>
+      <button id="instr-read" class="btn-secondary">📖 Read Instructions</button>
+      <button id="instr-save" class="btn-primary">Save File</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     HISTORY ITEM MODAL
+════════════════════════════════════════════════════════════ -->
+<div id="history-modal" class="modal-overlay hidden">
+  <div class="modal" style="width:700px;max-height:80vh">
+    <h2 id="hist-modal-title">Session Transcript</h2>
+    <div id="hist-modal-meta" style="font-size:12px;color:var(--vsc-muted);margin-bottom:8px"></div>
+    <div id="hist-modal-body" class="messages hist-messages"></div>
+    <div class="modal-actions">
+      <button id="hist-modal-close" class="btn-secondary">Close</button>
+      <button id="hist-modal-resume" class="btn-primary">▸ Resume Session</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SET RESET MODAL
+════════════════════════════════════════════════════════════ -->
+<div id="reset-modal" class="modal-overlay hidden">
+  <div class="modal" style="width:400px">
+    <h2>Set Account Reset Time</h2>
+    <label>Reset time (local)
+      <input type="datetime-local" id="reset-time" />
+    </label>
+    <div class="modal-actions">
+      <button id="reset-cancel" class="btn-secondary">Cancel</button>
+      <button id="reset-save" class="btn-primary">Set Reset</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

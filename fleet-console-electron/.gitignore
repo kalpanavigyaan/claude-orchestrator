@@ -1,0 +1,6 @@
+node_modules/
+.app-data/
+dist/
+*.tmp
+cdp-*.cjs
+cdp-*.mjs
