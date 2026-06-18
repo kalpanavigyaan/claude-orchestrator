@@ -1,0 +1,9 @@
+{
+  "name": "tool-server-proof",
+  "private": true,
+  "type": "module",
+  "description": "Reproducible measurement of token savings for the tool-server tools, using the same cl100k_base tokenizer the Rust core uses (tiktoken_rs::cl100k_base).",
+  "dependencies": {
+    "gpt-tokenizer": "^2.9.0"
+  }
+}

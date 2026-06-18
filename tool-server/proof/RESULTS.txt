@@ -1,0 +1,13 @@
+
+Token savings on REAL repo data — tokenizer: cl100k_base (same as tiktoken_rs::cl100k_base)
+
+tool           scenario                                                      before      after      saved  saved%
+-----------------------------------------------------------------------------------------------------------------
+region_extract createSession() from orchestrator.mjs (1790 lines)            16,732      1,948     14,784    88.4
+tds            git diff of 9 changed files                                   62,498      8,007     54,491    87.2
+noise_filter   aggregate over 30 real source files                           82,202     82,169         33     0.0
+log_dedup      291 npm-log lines -> 75 templates (real logs)                  5,227      1,933      3,294    63.0
+log_dedup      5994 .jsonl lines -> 4524 templates (NOT log-shaped)       6,285,633  6,180,222    105,411     1.7
+-----------------------------------------------------------------------------------------------------------------
+TOTAL                                                                     6,452,292  6,274,279    178,013     2.8
+
