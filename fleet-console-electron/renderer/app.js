@@ -24,11 +24,12 @@ let approvalQueue = [];    // pending approvals
 let historyData   = null;  // { root, sessions[] }
 let reposData     = null;  // { groups[] }
 let wslData       = null;  // { distros[] }
-let checkedRepos  = new Set(); // repo paths checked in the sidebar tree
-const sectionsOpen = { sessions: true, history: false, wsl: false, controls: false, intelligence: false, commands: false, repos: false };
-let historyLoaded = false;   // lazy-load sentinel for history
-let wslLoaded     = false;   // lazy-load sentinel for wsl
-let activeView    = "chat";
+let checkedRepos  = new Set();
+let activeRightPanel = "usage";  // which right-sidebar panel is shown
+let activeUsageTab   = "overview"; // which usage sub-tab
+let scatterData      = null;       // cached /api/usage/exchanges
+let historyLoaded    = false;      // lazy-load history on first paint
+let wslLoaded        = false;
 let viewingRel    = null;  // history item path being viewed
 let historyFilter = "";
 let cmdFilter     = "";
@@ -289,28 +290,29 @@ function mdToHtml(src) {
   return out.join("");
 }
 
-// ─── Accordion section toggle ────────────────────────────────────────────────
-function toggleSection(id) {
-  sectionsOpen[id] = !sectionsOpen[id];
-  const header = qs(`[data-sec="${id}"]`);
-  const body   = el(`sec-body-${id}`);
-  if (!header || !body) return;
-  header.classList.toggle("open", sectionsOpen[id]);
-  body.classList.toggle("open",   sectionsOpen[id]);
-  // Lazy-load on first open
-  if (sectionsOpen[id]) {
-    if (id === "history" && !historyLoaded) { historyLoaded = true; loadAndRenderHistory(); }
-    if (id === "wsl"     && !wslLoaded)     { wslLoaded = true;     loadAndRenderWsl(); }
-    if (id === "controls")    renderControls();
-    if (id === "intelligence") renderIntelligence();
-    if (id === "commands")    renderCommands();
-    if (id === "repos")       renderReposTree();
-  }
+// ─── Right panel navigation ───────────────────────────────────────────────────
+function switchRightPanel(id) {
+  activeRightPanel = id;
+  qsa(".rab-icon").forEach((b) => b.classList.toggle("active", b.dataset.rpanel === id));
+  qsa(".rp-panel").forEach((p) => p.classList.toggle("active", p.id === `rpanel-${id}`));
+  if (id === "usage")        loadAndRenderRightPanel();
+  if (id === "wsl")          { if (!wslLoaded) { wslLoaded = true; loadAndRenderWsl(); } else renderWslList(); }
+  if (id === "intelligence") renderIntelligence();
+  if (id === "commands")     renderCommands();
+  if (id === "repos")        renderReposTree();
 }
-
-function openSection(id) {
-  if (!sectionsOpen[id]) toggleSection(id);
+function switchUsageTab(tab) {
+  activeUsageTab = tab;
+  qsa(".rp-tab").forEach((t) => t.classList.toggle("active", t.dataset.utab === tab));
+  if (tab === "scatter" && !scatterData) loadScatterData().then(() => renderUsageTabContent());
+  else renderUsageTabContent();
 }
+async function loadScatterData() {
+  const d = await getJson("/api/usage/exchanges");
+  if (d) scatterData = d;
+}
+// openSection kept for backward compat (no-op for old calls referencing "sessions")
+function openSection() {}
 
 // ─── Connection & SSE ─────────────────────────────────────────────────────────
 let fleetES = null;
@@ -363,10 +365,11 @@ function renderFleet() {
   renderStatusBar();
   renderRightPanel();
   // Build tag is part of renderStatusBar now
-  // Re-render open side panels
-  if (sectionsOpen.controls)    renderControls();
-  if (sectionsOpen.intelligence) renderIntelligence();
-  if (sectionsOpen.commands)    renderCommands();
+  // Always render controls (now a permanent left pane)
+  renderControls();
+  // Re-render active right panels
+  if (activeRightPanel === "intelligence") renderIntelligence();
+  if (activeRightPanel === "commands")    renderCommands();
   // Drain approval queue
   drainApprovals();
 }
@@ -454,8 +457,7 @@ function renderStatusBar() {
   el("sb-right").innerHTML = parts.map((p, i) => (i > 0 ? pipe : "") + p).join("");
 }
 
-// ─── Right panel (usage) ──────────────────────────────────────────────────────
-let rightPanelVisible = true;  // visible by default
+// ─── Usage panel (right sidebar tab) ─────────────────────────────────────────
 let usageHistData = null;
 let usageHistLoadedAt = 0;
 
@@ -467,232 +469,247 @@ async function loadUsageHistory() {
   return usageHistData;
 }
 
-// ── SVG chart primitives ──
-function svgRing(pct, cls, size = 52) {
-  const r = (size / 2) - 5;
-  const circ = 2 * Math.PI * r;
-  const dash = Math.max(0, Math.min(100, pct)) / 100 * circ;
-  const color = cls === "high" ? "#f87171" : cls === "warn" ? "#fbbf24" : "#007acc";
-  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="flex-shrink:0">
-    <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="rgba(255,255,255,.1)" stroke-width="4"/>
-    <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="${color}" stroke-width="4"
-      stroke-dasharray="${dash.toFixed(2)} ${(circ-dash).toFixed(2)}"
-      stroke-dashoffset="${(circ/4).toFixed(2)}" stroke-linecap="round"/>
-    <text x="${size/2}" y="${size/2+4}" text-anchor="middle" font-size="10" font-weight="700"
-      fill="${color}">${pct.toFixed(0)}%</text>
-  </svg>`;
-}
-
-function svgTokenBar(inp, out, cache, width = 220) {
-  const total = inp + out + cache || 1;
-  const iw = Math.max(0, Math.round(inp / total * width));
-  const ow = Math.max(0, Math.round(out / total * width));
-  const cw = Math.max(0, width - iw - ow);
-  return `<svg width="${width}" height="14" viewBox="0 0 ${width} 14" style="display:block;width:100%">
-    ${iw > 0 ? `<rect x="0" y="3" width="${iw}" height="8" fill="#4ec9b0" rx="2"/>` : ""}
-    ${ow > 0 ? `<rect x="${iw}" y="3" width="${ow}" height="8" fill="#c586c0"/>` : ""}
-    ${cw > 0 ? `<rect x="${iw+ow}" y="3" width="${cw}" height="8" fill="#fbbf24" rx="2"/>` : ""}
-  </svg>`;
-}
-
-function svgBarChart(entries, { width = 240, height = 56, color = "#007acc" } = {}) {
-  if (!entries.length) return "";
-  const max  = Math.max(...entries.map((e) => e.v), 0.001);
-  const padB = 14, padT = 4;
-  const chartH = height - padT - padB;
-  const step   = width / entries.length;
-  const barW   = Math.max(2, step * 0.65);
-  let rects = "", texts = "";
-  entries.forEach((e, i) => {
-    const barH = Math.round((e.v / max) * chartH);
-    const x = i * step + (step - barW) / 2;
-    const y = padT + chartH - barH;
-    rects += `<rect x="${x.toFixed(1)}" y="${y}" width="${barW.toFixed(1)}" height="${Math.max(1, barH)}" fill="${color}" rx="1" opacity="${e.v > 0 ? 0.8 : 0.15}"/>`;
-    if (i === 0 || i === entries.length - 1 || i === Math.floor(entries.length / 2)) {
-      texts += `<text x="${(x + barW/2).toFixed(1)}" y="${height - 1}" text-anchor="middle" font-size="7" fill="rgba(255,255,255,.4)">${escapeHtml(e.l)}</text>`;
-    }
-  });
-  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="display:block;width:100%;height:${height}px">
-    <line x1="0" y1="${padT+chartH}" x2="${width}" y2="${padT+chartH}" stroke="rgba(255,255,255,.08)"/>
-    ${rects}${texts}
-  </svg>`;
-}
-
-function toggleRightPanel() {
-  rightPanelVisible = !rightPanelVisible;
-  el("right-panel").classList.toggle("hidden", !rightPanelVisible);
-  el("btn-toggle-usage").classList.toggle("active", rightPanelVisible);
-  if (rightPanelVisible) loadAndRenderRightPanel();
-}
-
 async function loadAndRenderRightPanel() {
-  if (!rightPanelVisible) return;
-  const body = el("right-panel-body");
-  body.innerHTML = `<div class="rp-hint">Loading usage data…</div>`;
+  if (activeRightPanel !== "usage") return;
+  const body = el("rpanel-usage-body");
+  if (!body) return;
+  if (!usageHistData) body.innerHTML = `<div class="up-empty">Loading…</div>`;
   await loadUsageHistory();
-  renderRightPanel();
+  renderUsageTabContent();
 }
 
 function renderRightPanel() {
-  if (!rightPanelVisible || !latest) return;
-  const body    = el("right-panel-body");
-  const u       = latest.usage || {};
-  const totals  = u.totals || {};
-  const wins    = sortedWindows(u.windows);
-  const hist    = usageHistData;
-  const sessions = latest.sessions || [];
-  const inp    = totals.inputTokens || 0;
-  const out    = totals.outputTokens || 0;
-  const cacheR = totals.cacheReadTokens || 0;
-  const cacheC = totals.cacheCreationTokens || 0;
-  const cache  = cacheR + cacheC;
+  if (activeRightPanel === "usage") renderUsageTabContent();
+  else if (activeRightPanel === "intelligence") renderIntelligence();
+  else if (activeRightPanel === "commands")     renderCommands();
+}
 
-  let html = "";
-
-  // ── Hero card ─────────────────────────────────────────────────────────────
-  const sub = u.subscriptionType || "";
-  html += `<div class="up-hero">
-    <div class="up-hero-top">
-      <div class="up-hero-cost">${totals.costUsd > 0 ? `$${totals.costUsd.toFixed(4)}` : "—"}</div>
-      ${sub ? `<span class="up-hero-plan">${escapeHtml(sub)}</span>` : ""}
-    </div>
-    <div class="up-hero-tokens">${inp > 0 || out > 0
-      ? `↑ ${fmtTok(inp)}&thinsp;in &nbsp;↓ ${fmtTok(out)}&thinsp;out${cache > 0 ? ` &nbsp;⟳ ${fmtTok(cache)}&thinsp;cache` : ""}`
-      : `${sessions.length} session${sessions.length !== 1 ? "s" : ""} active`}
-    </div>
-  </div>`;
-
-  // ── Account limits (Copilot-chat list style) ──────────────────────────────
-  const utilWins = wins.filter((w) => typeof w.utilization === "number");
-  const reqWins  = wins.filter((w) => w.utilization == null && w.requestCount != null);
-
-  if (utilWins.length || reqWins.length) {
-    html += `<div class="up-section"><div class="up-section-header">Account Limits</div>`;
-    for (const w of utilWins) {
-      const pct   = Math.max(0, Math.min(100, w.utilization));
-      const cls   = pct >= 90 ? "high" : pct >= 70 ? "warn" : "ok";
-      const label = WINDOW_LABELS[w.type] || w.type;
-      const cd    = w.resetAt ? fmtCountdown(w.resetAt) : "";
-      html += `<div class="up-limit-row">
-        <div class="up-limit-top">
-          <span class="up-dot ${cls}"></span>
-          <span class="up-limit-label">${escapeHtml(label)}</span>
-          <span class="up-limit-val ${cls}">${pct.toFixed(0)}%</span>
-        </div>
-        <div class="up-limit-track"><div class="up-limit-fill ${cls}" style="width:${pct.toFixed(1)}%"></div></div>
-        ${cd ? `<div class="up-limit-cd">↺ resets ${escapeHtml(cd)}</div>` : ""}
-      </div>`;
-    }
-    for (const w of reqWins) {
-      const label = WINDOW_LABELS[w.type] || w.type;
-      html += `<div class="up-limit-row">
-        <div class="up-limit-top">
-          <span class="up-dot ok"></span>
-          <span class="up-limit-label">${escapeHtml(label)}</span>
-          <span class="up-limit-val ok">${w.requestCount.toLocaleString()}</span>
-        </div>
-        ${w.sessionCount ? `<div class="up-limit-cd">${w.sessionCount.toLocaleString()} sessions</div>` : ""}
-      </div>`;
-    }
-    html += `</div>`;
-  }
-
-  // ── Token breakdown ───────────────────────────────────────────────────────
-  if (inp > 0 || out > 0 || cache > 0) {
-    const tokenTotal = inp + out + cache;
-    const iw = Math.round(inp / tokenTotal * 100);
-    const ow = Math.round(out / tokenTotal * 100);
-    const cw = 100 - iw - ow;
-    html += `<div class="up-section">
-      <div class="up-section-header">Tokens This Run</div>
-      <div class="up-tok-bar">
-        <div class="up-tok-seg inp" style="width:${iw}%" title="Input: ${inp.toLocaleString()}"></div>
-        <div class="up-tok-seg out" style="width:${ow}%" title="Output: ${out.toLocaleString()}"></div>
-        ${cw > 0 ? `<div class="up-tok-seg cach" style="width:${cw}%" title="Cache: ${cache.toLocaleString()}"></div>` : ""}
-      </div>
-      <div class="up-tok-legend">
-        <span class="up-tok-dot inp"></span>↑&thinsp;${fmtTok(inp)}&thinsp;in
-        <span class="up-tok-dot out"></span>↓&thinsp;${fmtTok(out)}&thinsp;out
-        ${cache > 0 ? `<span class="up-tok-dot cach"></span>⟳&thinsp;${fmtTok(cache)}&thinsp;cache` : ""}
-      </div>
-      <div class="up-tok-rows">
-        <div class="up-tok-row"><span>Input</span><span>${inp.toLocaleString()}</span></div>
-        <div class="up-tok-row"><span>Output</span><span>${out.toLocaleString()}</span></div>
-        ${cacheR > 0 ? `<div class="up-tok-row"><span>Cache read</span><span>${cacheR.toLocaleString()}</span></div>` : ""}
-        ${cacheC > 0 ? `<div class="up-tok-row"><span>Cache create</span><span>${cacheC.toLocaleString()}</span></div>` : ""}
-      </div>
-    </div>`;
-  }
-
-  // ── Sessions ──────────────────────────────────────────────────────────────
-  const sessWithData = sessions.filter((s) => {
-    const r = s.lastResult || {};
-    return r.cost > 0 || (r.usage?.input_tokens || 0) > 0;
+// ── SVG primitives ──
+function svgBarChart(entries, { width = 260, height = 60, color = "#58a6ff" } = {}) {
+  if (!entries.length) return "";
+  const max = Math.max(...entries.map((e) => e.v), 0.001);
+  const padB = 14, padT = 4, chartH = height - padT - padB;
+  const step = width / entries.length, barW = Math.max(2, step * 0.65);
+  let rects = "", texts = "";
+  entries.forEach((e, i) => {
+    const h = Math.round((e.v / max) * chartH);
+    const x = i * step + (step - barW) / 2;
+    const y = padT + chartH - h;
+    rects += `<rect x="${x.toFixed(1)}" y="${y}" width="${barW.toFixed(1)}" height="${Math.max(1,h)}" fill="${color}" rx="1" opacity="${e.v>0?0.85:0.1}"/>`;
+    if (i === 0 || i === entries.length-1 || i === Math.floor(entries.length/2))
+      texts += `<text x="${(x+barW/2).toFixed(1)}" y="${height-1}" text-anchor="middle" font-size="7" fill="rgba(255,255,255,.35)">${escapeHtml(e.l)}</text>`;
   });
-  if (sessWithData.length) {
-    const maxInp = Math.max(...sessWithData.map((s) => s.lastResult?.usage?.input_tokens || 0), 1);
-    html += `<div class="up-section"><div class="up-section-header">Sessions</div>`;
-    for (const s of sessWithData) {
-      const r  = s.lastResult || {}, tu = r.usage || {};
-      const si = tu.input_tokens || 0, so = tu.output_tokens || 0, sc = tu.cache_read_input_tokens || 0;
-      const statusCls = s.status === "running" ? "running" : s.status === "idle" ? "ok" : "muted";
-      const fillW = Math.round(si / maxInp * 100);
-      html += `<div class="up-sess-row">
-        <div class="up-sess-top">
-          <span class="up-dot ${statusCls}"></span>
-          <span class="up-sess-name" title="${escapeHtml(s.label)}">${escapeHtml(s.label)}</span>
-          <span class="up-sess-cost">${r.cost > 0 ? `$${r.cost.toFixed(4)}` : ""}</span>
-        </div>
-        ${si > 0 ? `<div class="up-sess-bar-track"><div class="up-sess-bar-fill" style="width:${fillW}%"></div></div>
-        <div class="up-sess-toks">↑${fmtTok(si)}&thinsp;in · ↓${fmtTok(so)}&thinsp;out${sc > 0 ? ` · ⟳${fmtTok(sc)}` : ""}</div>` : ""}
-      </div>`;
-    }
-    html += `</div>`;
-  }
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="display:block;width:100%">
+    <line x1="0" y1="${padT+chartH}" x2="${width}" y2="${padT+chartH}" stroke="rgba(255,255,255,.06)"/>
+    ${rects}${texts}</svg>`;
+}
 
-  // ── Daily charts (from history) ───────────────────────────────────────────
-  if (hist?.byDay) {
-    const dayEntries = Object.entries(hist.byDay)
-      .sort(([a],[b]) => a.localeCompare(b)).slice(-14)
-      .map(([d, b]) => ({ l: d.slice(5), v: (b.inputTokens||0)+(b.outputTokens||0) }));
-    if (dayEntries.some((e) => e.v > 0)) {
-      html += `<div class="up-section">
-        <div class="up-section-header">Daily Tokens — 14 days</div>
-        <div class="up-chart">${svgBarChart(dayEntries, { color: "#58a6ff" })}</div>
-      </div>`;
-    }
-    const costEntries = Object.entries(hist.byDay)
-      .sort(([a],[b]) => a.localeCompare(b)).slice(-14)
-      .map(([d, b]) => ({ l: d.slice(5), v: b.costUsd || 0 }));
-    if (costEntries.some((e) => e.v > 0)) {
-      html += `<div class="up-section">
-        <div class="up-section-header">Daily Cost — 14 days</div>
-        <div class="up-chart">${svgBarChart(costEntries, { color: "#3fb950" })}</div>
-      </div>`;
-    }
-    if (hist.byModel && Object.keys(hist.byModel).length) {
-      const models = Object.entries(hist.byModel)
-        .sort(([,a],[,b]) => (b.inputTokens+b.outputTokens)-(a.inputTokens+a.outputTokens)).slice(0,6);
-      const maxTok = Math.max(...models.map(([,b]) => (b.inputTokens||0)+(b.outputTokens||0)), 1);
-      html += `<div class="up-section"><div class="up-section-header">By Model</div>`;
-      for (const [model, b] of models) {
-        const tok  = (b.inputTokens||0)+(b.outputTokens||0);
-        const w    = Math.round(tok/maxTok*100);
-        const name = model.includes("-") ? model.split("-").slice(-2).join("-") : model;
-        html += `<div class="up-model-row">
-          <div class="up-model-top">
-            <span class="up-model-name" title="${escapeHtml(model)}">${escapeHtml(name)}</span>
-            <span class="up-model-tok">${fmtTok(tok)}</span>
-          </div>
-          <div class="up-model-track"><div class="up-model-fill" style="width:${w}%"></div></div>
-        </div>`;
+function svgStackedBarChart(entries, { width = 260, height = 70, colors = ["#3fb950","#bc8cff","#fbbf24","#f87171"] } = {}) {
+  if (!entries.length) return "";
+  const maxSum = Math.max(...entries.map((e) => e.values.reduce((a,b)=>a+b,0)), 0.001);
+  const padB = 14, padT = 4, chartH = height - padT - padB;
+  const step = width / entries.length, barW = Math.max(2, step * 0.65);
+  let rects = "", texts = "";
+  entries.forEach((e, i) => {
+    const x = i * step + (step - barW) / 2;
+    const sum = e.values.reduce((a,b)=>a+b,0);
+    let y = padT + chartH;
+    e.values.forEach((v, vi) => {
+      if (!v) return;
+      const h = Math.round((v / maxSum) * chartH);
+      y -= h;
+      rects += `<rect x="${x.toFixed(1)}" y="${y}" width="${barW.toFixed(1)}" height="${h}" fill="${colors[vi]}" rx="1" opacity="0.8"/>`;
+    });
+    if (i === 0 || i === entries.length-1 || i === Math.floor(entries.length/2))
+      texts += `<text x="${(x+barW/2).toFixed(1)}" y="${height-1}" text-anchor="middle" font-size="7" fill="rgba(255,255,255,.35)">${escapeHtml(e.l)}</text>`;
+  });
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="display:block;width:100%">
+    <line x1="0" y1="${padT+chartH}" x2="${width}" y2="${padT+chartH}" stroke="rgba(255,255,255,.06)"/>
+    ${rects}${texts}</svg>`;
+}
+
+function svgScatter(exchanges, { width = 260, height = 100 } = {}) {
+  if (!exchanges || !exchanges.length) return `<div class="up-empty">No exchange data</div>`;
+  const sample = exchanges.slice(-800);
+  const minTs = Math.min(...sample.map((e) => e.tsMs));
+  const maxTs = Math.max(...sample.map((e) => e.tsMs), minTs + 1);
+  const maxTok = Math.max(...sample.map((e) => (e.inp||0)+(e.out||0)), 1);
+  const pL=8, pR=4, pT=4, pB=4;
+  const dots = sample.map((e) => {
+    const x = pL + ((e.tsMs - minTs) / (maxTs - minTs)) * (width - pL - pR);
+    const tok = (e.inp||0) + (e.out||0);
+    const y = pT + (1 - tok / maxTok) * (height - pT - pB);
+    const r = Math.max(1.5, Math.min(4.5, tok / maxTok * 6));
+    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r.toFixed(1)}" fill="#58a6ff" opacity="0.45"/>`;
+  }).join("");
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="display:block;width:100%">${dots}</svg>`;
+}
+
+// ── Usage tab renderer ──
+function renderUsageTabContent() {
+  const body = el("rpanel-usage-body");
+  if (!body || activeRightPanel !== "usage") return;
+  const tab  = activeUsageTab;
+  const u    = latest?.usage || {};
+  const totals = u.totals || {};
+  const wins   = sortedWindows(u.windows);
+  const hist   = usageHistData;
+
+  if (tab === "overview") {
+    // KPI cards + account windows + cost chart
+    const inp = totals.inputTokens||0, out = totals.outputTokens||0;
+    const cacheR = totals.cacheReadTokens||0, cacheC = totals.cacheCreationTokens||0;
+    const hitPct = (inp+out+cacheR+cacheC) > 0 ? ((cacheR+cacheC)/(inp+out+cacheR+cacheC)*100).toFixed(1)+"%" : "—";
+    let html = `<div class="uso-kpis">
+      <div class="uso-kpi"><div class="uso-kpi-label">Total Cost</div><div class="uso-kpi-value">${totals.costUsd>0?"$"+totals.costUsd.toFixed(4):"—"}</div><div class="uso-kpi-sub">${u.subscriptionType||"plan"}</div></div>
+      <div class="uso-kpi"><div class="uso-kpi-label">Input</div><div class="uso-kpi-value">${fmtTok(inp)}</div><div class="uso-kpi-sub">prompt tokens</div></div>
+      <div class="uso-kpi"><div class="uso-kpi-label">Output</div><div class="uso-kpi-value">${fmtTok(out)}</div><div class="uso-kpi-sub">tokens generated</div></div>
+      <div class="uso-kpi"><div class="uso-kpi-label">Cache Reads</div><div class="uso-kpi-value">${fmtTok(cacheR)}</div><div class="uso-kpi-sub">${hitPct} hit rate</div></div>
+      <div class="uso-kpi"><div class="uso-kpi-label">Cache Writes</div><div class="uso-kpi-value">${fmtTok(cacheC)}</div><div class="uso-kpi-sub">new entries</div></div>
+      <div class="uso-kpi"><div class="uso-kpi-label">Sessions</div><div class="uso-kpi-value">${(latest?.sessions||[]).length}</div><div class="uso-kpi-sub">${(totals.inputTokens||totals.outputTokens)?((latest?.sessions||[]).length+" active"):"this run"}</div></div>
+    </div>`;
+    // Account windows
+    if (wins.some((w) => w.utilization != null || w.requestCount != null)) {
+      html += `<div class="uso-section"><div class="uso-section-title">Account Limits</div>`;
+      for (const w of wins) {
+        const lbl = WINDOW_LABELS[w.type] || w.type;
+        if (typeof w.utilization === "number") {
+          const pct = Math.max(0, Math.min(100, w.utilization));
+          const cls = pct >= 90 ? "high" : pct >= 70 ? "warn" : "ok";
+          const cd  = w.resetAt ? `↺ ${fmtCountdown(w.resetAt)}` : "";
+          html += `<div class="uso-window-row">
+            <span class="uso-dot ${cls}"></span>
+            <span class="uso-window-label">${escapeHtml(lbl)}</span>
+            <div class="uso-window-track"><div class="uso-window-fill ${cls}" style="width:${pct.toFixed(0)}%"></div></div>
+            <span class="uso-window-pct ${cls}">${pct.toFixed(0)}%</span>
+          </div>${cd ? `<div class="uso-window-cd">${cd}</div>` : ""}`;
+        } else if (w.requestCount != null) {
+          html += `<div class="uso-window-row">
+            <span class="uso-dot ok"></span>
+            <span class="uso-window-label">${escapeHtml(lbl)}</span>
+            <span class="uso-window-pct ok">${w.requestCount.toLocaleString()}</span>
+          </div>`;
+        }
       }
       html += `</div>`;
     }
-  }
+    // Cost chart from history
+    if (hist?.byDay) {
+      const entries = Object.entries(hist.byDay).sort(([a],[b])=>a.localeCompare(b)).slice(-30)
+        .map(([d,b]) => ({ l: d.slice(5), v: b.costUsd||0 }));
+      if (entries.some((e) => e.v > 0)) {
+        html += `<div class="uso-section"><div class="uso-section-title">Daily Cost — 30 days</div>
+          <div class="uso-chart">${svgBarChart(entries, {color:"#3fb950"})}</div></div>`;
+      }
+    }
+    body.innerHTML = html;
 
-  if (!html) html = `<div class="up-empty">No usage data yet.<br>Start a session to see metrics.</div>`;
-  body.innerHTML = html;
+  } else if (tab === "daily" || tab === "monthly") {
+    const key = tab === "daily" ? "byDay" : "byMonth";
+    const entries = hist?.[key] ? Object.entries(hist[key]).sort(([a],[b])=>a.localeCompare(b)).slice(-30) : [];
+    if (!entries.length) { body.innerHTML = `<div class="up-empty">No ${tab} data yet.</div>`; return; }
+    const COLORS = ["#3fb950","#bc8cff","#fbbf24","#f87171"];
+    const mapped = entries.map(([d,b]) => ({ l: d.slice(5), values: [b.inputTokens||0, b.outputTokens||0, b.cacheReadTokens||0, b.cacheCreationTokens||0] }));
+    let html = `<div class="uso-section">
+      <div class="uso-section-title">Input vs Output Tokens Per ${tab==="daily"?"Day":"Month"}</div>
+      <div class="uso-legend">
+        <span class="uso-leg-dot" style="background:${COLORS[0]}"></span>Input
+        <span class="uso-leg-dot" style="background:${COLORS[1]}"></span>Output
+        <span class="uso-leg-dot" style="background:${COLORS[2]}"></span>Cache read
+        <span class="uso-leg-dot" style="background:${COLORS[3]}"></span>Cache write
+      </div>
+      <div class="uso-chart">${svgStackedBarChart(mapped, {colors:COLORS})}</div>
+    </div>
+    <div class="uso-section">
+      <table class="uso-table"><thead><tr>
+        <th>${tab==="daily"?"Date":"Month"}</th><th class="num">Input</th><th class="num">Output</th>
+        <th class="num">Cache R</th><th class="num">Cache W</th><th class="num">Hit%</th>
+        <th class="num">Cost</th><th class="num">Sessions</th>
+      </tr></thead><tbody>`;
+    for (const [d, b] of [...entries].reverse()) {
+      const total = (b.inputTokens||0)+(b.outputTokens||0)+(b.cacheReadTokens||0)+(b.cacheCreationTokens||0);
+      const hit = total > 0 ? (((b.cacheReadTokens||0)+(b.cacheCreationTokens||0))/total*100).toFixed(1)+"%" : "—";
+      const cost = b.costUsd > 0 ? `<span class="pos">$${b.costUsd.toFixed(4)}</span>` : "$0.0000";
+      html += `<tr><td>${escapeHtml(d)}</td><td class="num">${fmtTok(b.inputTokens||0)}</td><td class="num">${fmtTok(b.outputTokens||0)}</td><td class="num">${fmtTok(b.cacheReadTokens||0)}</td><td class="num">${fmtTok(b.cacheCreationTokens||0)}</td><td class="num">${hit}</td><td class="num">${cost}</td><td class="num">${b.count||0}</td></tr>`;
+    }
+    html += `</tbody></table></div>`;
+    body.innerHTML = html;
+
+  } else if (tab === "models") {
+    const models = hist?.byModel ? Object.entries(hist.byModel).sort(([,a],[,b])=>(b.inputTokens+b.outputTokens)-(a.inputTokens+a.outputTokens)) : [];
+    if (!models.length) { body.innerHTML = `<div class="up-empty">No model data yet.</div>`; return; }
+    const maxTok = Math.max(...models.map(([,b])=>(b.inputTokens||0)+(b.outputTokens||0)),1);
+    let html = `<div class="uso-section"><div class="uso-section-title">Token Usage by Model</div>`;
+    for (const [model, b] of models) {
+      const tok = (b.inputTokens||0)+(b.outputTokens||0);
+      const w   = Math.round(tok/maxTok*100);
+      html += `<div class="up-model-row">
+        <div class="up-model-top"><span class="up-model-name" title="${escapeHtml(model)}">${escapeHtml(model.split("-").slice(-2).join("-"))}</span><span class="up-model-tok">${fmtTok(tok)}</span></div>
+        <div class="up-model-track"><div class="up-model-fill" style="width:${w}%"></div></div>
+      </div>`;
+    }
+    html += `</div><div class="uso-section"><table class="uso-table"><thead><tr>
+        <th>Model</th><th class="num">Input</th><th class="num">Output</th><th class="num">Cache</th><th class="num">Sessions</th>
+      </tr></thead><tbody>`;
+    for (const [model, b] of models) {
+      html += `<tr><td style="font-size:10px">${escapeHtml(model)}</td><td class="num">${fmtTok(b.inputTokens||0)}</td><td class="num">${fmtTok(b.outputTokens||0)}</td><td class="num">${fmtTok((b.cacheReadTokens||0)+(b.cacheCreationTokens||0))}</td><td class="num">${b.count||0}</td></tr>`;
+    }
+    html += `</tbody></table></div>`;
+    body.innerHTML = html;
+
+  } else if (tab === "sessions-hist") {
+    const sessions = hist?.sessions || [];
+    if (!sessions.length) { body.innerHTML = `<div class="up-empty">No saved session data yet.</div>`; return; }
+    let html = `<div class="uso-section"><table class="uso-table"><thead><tr>
+        <th>Label</th><th class="num">Cost</th><th class="num">Input</th><th class="num">Output</th><th class="num">Turns</th>
+      </tr></thead><tbody>`;
+    for (const s of sessions.slice(0, 50)) {
+      const cost = s.costUsd > 0 ? `<span class="pos">$${s.costUsd.toFixed(4)}</span>` : "—";
+      html += `<tr><td style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(s.label)}">${escapeHtml(s.label)}</td><td class="num">${cost}</td><td class="num">${fmtTok(s.inputTokens||0)}</td><td class="num">${fmtTok(s.outputTokens||0)}</td><td class="num">${s.turns||0}</td></tr>`;
+    }
+    html += `</tbody></table></div>`;
+    body.innerHTML = html;
+
+  } else if (tab === "scatter") {
+    const exchanges = scatterData?.exchanges || [];
+    if (!exchanges.length) { body.innerHTML = `<div class="up-empty">No exchange data. Loading…</div>`; loadScatterData().then(() => renderUsageTabContent()); return; }
+    const COLORS = ["#3fb950","#bc8cff","#fbbf24","#f87171"];
+    // Scatter by day — group into days
+    const byDay = {};
+    for (const e of exchanges) {
+      const d = e.day || new Date(e.tsMs).toISOString().slice(0,10);
+      byDay[d] = byDay[d] || [];
+      byDay[d].push(e);
+    }
+    const days = Object.keys(byDay).sort().slice(-14);
+    const scatter = days.map((d) => ({
+      l: d.slice(5),
+      values: [
+        byDay[d].reduce((a,e)=>a+(e.inp||0),0),
+        byDay[d].reduce((a,e)=>a+(e.out||0),0),
+        byDay[d].reduce((a,e)=>a+(e.cr||0),0),
+        byDay[d].reduce((a,e)=>a+(e.cc||0),0),
+      ]
+    }));
+    let html = `<div class="uso-section">
+      <div class="uso-section-title">Exchanges (last 800) · each dot = 1 API call</div>
+      <div class="uso-chart">${svgScatter(exchanges)}</div>
+      <div class="uso-legend" style="margin-top:4px">
+        <span style="opacity:.5;font-size:10px">${exchanges.length.toLocaleString()} exchanges · ${(scatterData?.totals?.inputTokens||0)>0?fmtTok(scatterData.totals.inputTokens)+" in":""}${(scatterData?.totals?.outputTokens||0)>0?" · "+fmtTok(scatterData.totals.outputTokens)+" out":""}</span>
+      </div>
+    </div>
+    <div class="uso-section">
+      <div class="uso-section-title">Tokens per Day (scatter aggregated)</div>
+      <div class="uso-legend">
+        <span class="uso-leg-dot" style="background:${COLORS[0]}"></span>Input
+        <span class="uso-leg-dot" style="background:${COLORS[1]}"></span>Output
+        <span class="uso-leg-dot" style="background:${COLORS[2]}"></span>Cache R
+        <span class="uso-leg-dot" style="background:${COLORS[3]}"></span>Cache W
+      </div>
+      <div class="uso-chart">${svgStackedBarChart(scatter, {colors:COLORS})}</div>
+    </div>`;
+    body.innerHTML = html;
+  }
 }
 
 // ─── Sessions list ────────────────────────────────────────────────────────────
@@ -735,8 +752,8 @@ function selectSession(id) {
   const s = latest?.sessions?.find((x) => x.id === id);
   if (s) updateChatHeader(s);
   // Re-render open controls/intelligence
-  if (sectionsOpen.controls)     renderControls();
-  if (sectionsOpen.intelligence) renderIntelligence();
+  renderControls();
+  if (activeRightPanel === "intelligence") renderIntelligence();
   // Sync repos checkboxes with session's additionalDirectories
   if (s) syncRepoCheckboxesFromSession(s);
   // Refresh status bar session cost immediately
@@ -782,6 +799,7 @@ function handleSessionEvent(ev) {
   }
 }
 
+// ─── Message rendering ────────────────────────────────────────────────────────
 // ─── Message rendering ────────────────────────────────────────────────────────
 const messagesEl = el("messages");
 function appendMessage(m) {
@@ -1252,7 +1270,7 @@ async function viewHistoryItem(rel) {
   // Highlight in tree
   el("history-tree").querySelectorAll(".tree-session-item").forEach((i) => i.classList.toggle("selected", i.dataset.rel === rel));
   lastControlsSig = "";
-  if (sectionsOpen.controls) renderControls();
+  renderControls();
   // Clear messages and show loading
   const msgDiv = el("messages");
   msgDiv.innerHTML = '<div class="msg"><div class="msg-system-text">Loading transcript…</div></div>';
@@ -1343,7 +1361,7 @@ async function loadRepos() {
   reposLoading = false;
   if (data) {
     reposData = data;
-    if (sectionsOpen.repos) renderReposTree();
+    if (activeRightPanel === "repos") renderReposTree();
   }
 }
 
@@ -1587,7 +1605,7 @@ async function refreshInstructions() {
   });
 }
 
-// ─── Sidebar resize ───────────────────────────────────────────────────────────
+// ─── Sidebar resize (horizontal width) ────────────────────────────────────────
 function setupSidebarResize() {
   const sidebar = el("sidebar");
   const handle  = el("sidebar-resize");
@@ -1603,6 +1621,27 @@ function setupSidebarResize() {
     const w = Math.max(160, Math.min(600, startW + (e.clientX - startX)));
     sidebar.style.width = w + "px";
     localStorage.setItem("sidebarWidth", w);
+  });
+  document.addEventListener("mouseup", () => {
+    if (dragging) { dragging = false; handle.classList.remove("dragging"); document.body.style.cursor = ""; }
+  });
+}
+
+// ─── Vertical pane resize (within left sidebar) ────────────────────────────────
+function setupVerticalResize(handle, topPane, bottomPane) {
+  if (!handle || !topPane || !bottomPane) return;
+  let dragging = false, startY = 0, startH = 0;
+  handle.addEventListener("mousedown", (e) => {
+    dragging = true; startY = e.clientY; startH = topPane.offsetHeight;
+    handle.classList.add("dragging");
+    document.body.style.cursor = "row-resize";
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const h = Math.max(60, startH + (e.clientY - startY));
+    topPane.style.height = h + "px";
+    topPane.style.flex = "none";
   });
   document.addEventListener("mouseup", () => {
     if (dragging) { dragging = false; handle.classList.remove("dragging"); document.body.style.cursor = ""; }
@@ -1658,27 +1697,27 @@ function setupPeriodicRefresh() {
 
 // ─── Wire all static event listeners ─────────────────────────────────────────
 function wireStaticListeners() {
-  // Accordion section headers
-  qsa(".sb-section-header").forEach((hdr) => {
-    hdr.addEventListener("click", (e) => {
-      if (e.target.closest(".sb-section-actions")) return; // let action buttons through
-      toggleSection(hdr.dataset.sec);
-    });
+  // Accordion section headers (no longer exist — no-op)
+  // Right activity bar icons
+  qsa(".rab-icon").forEach((btn) => {
+    btn.addEventListener("click", () => switchRightPanel(btn.dataset.rpanel));
   });
 
-  // Editor tabs (chat only now; usage is in the right panel)
+  // Usage sub-tabs
+  qsa(".rp-tab").forEach((tab) => {
+    tab.addEventListener("click", () => switchUsageTab(tab.dataset.utab));
+  });
+
+  // Editor tabs (chat only)
   qsa(".editor-tab").forEach((tab) => {
     tab.addEventListener("click", () => {
       qsa(".editor-tab").forEach((t) => t.classList.toggle("active", t === tab));
     });
   });
 
-  // Usage right panel toggle
-  el("btn-toggle-usage").addEventListener("click", toggleRightPanel);
-  el("btn-close-right-panel").addEventListener("click", () => {
-    rightPanelVisible = true;  // force-set so toggle flips to false
-    toggleRightPanel();
-  });
+  // Usage right panel toggle — no longer needed (always visible in right sidebar)
+  // but keep btn-toggle-usage wired to switchRightPanel for the RAB icon
+  el("btn-refresh-wsl")?.addEventListener("click", loadAndRenderWsl);
 
   // New session button
   el("btn-new-session").addEventListener("click", openNewSessionModal);
@@ -1806,14 +1845,16 @@ async function init() {
   setupSidebarResize();
   setupComposer();
   setupPeriodicRefresh();
-  // Initial render for always-open sections
-  renderControls(); // renders hint until session selected
-  // Mark usage icon as active since panel starts visible
-  el("btn-toggle-usage").classList.add("active");
+  // Initial render for always-open left panes
+  renderControls();
+  // Set up vertical pane resizers
+  setupVerticalResize(el("vr-1"), el("lp-sessions"), el("lp-history"));
+  setupVerticalResize(el("vr-2"), el("lp-history"), el("lp-controls"));
   // Start SSE
   connectFleet();
-  // Load background data + usage history (panel is visible by default)
+  // Load all background data
   loadRepos();
+  loadAndRenderHistory();
   loadAndRenderRightPanel();
 }
 

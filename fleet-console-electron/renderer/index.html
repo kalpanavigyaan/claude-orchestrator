@@ -46,118 +46,49 @@
 ════════════════════════════════════════════════════════════ -->
 <div class="workbench">
 
-  <!-- ─── ACTIVITY BAR ─────────────────────────────────────── -->
+  <!-- ─── LEFT ACTIVITY BAR ────────────────────────────────── -->
   <nav class="activity-bar" aria-label="Activity Bar">
     <div class="ab-actions">
       <button class="ab-action-btn" id="btn-new-session" title="New Session (Ctrl+N)">
-        <svg viewBox="0 0 16 16" fill="currentColor">
-          <path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-        </svg>
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
       </button>
       <button class="ab-action-btn" id="btn-set-reset" title="Set Account Reset Time">
-        <svg viewBox="0 0 16 16" fill="currentColor">
-          <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2" fill="none"/>
-          <path d="M8 4v4l3 2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-        </svg>
+        <svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M8 4v4l3 2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
       </button>
     </div>
     <div class="ab-bottom">
-      <button class="ab-action-btn ab-icon-usage" id="btn-toggle-usage" title="Usage Panel">
-        <svg viewBox="0 0 16 16" fill="currentColor">
-          <path d="M1 12L5 7l3 3 5-6" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </button>
       <div class="ab-countdown" id="account-countdown" title="Account reset countdown">—</div>
     </div>
   </nav>
 
-  <!-- ─── SIDEBAR (accordion sections) ─────────────────────── -->
+  <!-- ─── LEFT SIDEBAR  (3 always-open panes) ─────────────── -->
   <div class="sidebar" id="sidebar">
 
-    <!-- Sessions -->
-    <div class="sb-section">
-      <div class="sb-section-header open" data-sec="sessions">
-        <span class="sb-section-icon">▶</span>
-        <span class="sb-section-title">Active Sessions</span>
+    <!-- Active Sessions -->
+    <div class="lp-pane" id="lp-sessions" style="height:180px">
+      <div class="lp-header">
+        Active Sessions
         <span class="ab-badge hidden" id="sessions-badge"></span>
       </div>
-      <div class="sb-section-body open" id="sec-body-sessions">
-        <div id="sessions-list"></div>
-      </div>
+      <div class="lp-body" id="sessions-list"></div>
     </div>
+    <div class="lp-vresize" id="vr-1"></div>
 
-    <!-- History -->
-    <div class="sb-section">
-      <div class="sb-section-header" data-sec="history">
-        <span class="sb-section-icon">▶</span>
-        <span class="sb-section-title">Session History</span>
-        <div class="sb-section-actions">
-          <button class="panel-title-btn" id="btn-refresh-history" title="Refresh">↻</button>
-        </div>
+    <!-- Session History -->
+    <div class="lp-pane lp-grow" id="lp-history">
+      <div class="lp-header">
+        Session History
+        <button class="panel-title-btn" id="btn-refresh-history" title="Refresh">↻</button>
       </div>
-      <div class="sb-section-body" id="sec-body-history">
-        <input class="panel-filter" id="history-filter" placeholder="Filter sessions…" />
-        <div class="tree-view" id="history-tree"></div>
-      </div>
+      <input class="panel-filter" id="history-filter" placeholder="Filter sessions…" />
+      <div class="lp-body tree-view" id="history-tree"></div>
     </div>
-
-    <!-- WSL Distros -->
-    <div class="sb-section">
-      <div class="sb-section-header" data-sec="wsl">
-        <span class="sb-section-icon">▶</span>
-        <span class="sb-section-title">WSL Distros</span>
-        <div class="sb-section-actions">
-          <button class="panel-title-btn" id="btn-refresh-wsl" title="Refresh">↻</button>
-        </div>
-      </div>
-      <div class="sb-section-body" id="sec-body-wsl">
-        <div id="wsl-list"></div>
-      </div>
-    </div>
+    <div class="lp-vresize" id="vr-2"></div>
 
     <!-- Controls -->
-    <div class="sb-section">
-      <div class="sb-section-header" data-sec="controls">
-        <span class="sb-section-icon">▶</span>
-        <span class="sb-section-title">Controls</span>
-      </div>
-      <div class="sb-section-body" id="sec-body-controls">
-        <div id="controls-content"></div>
-      </div>
-    </div>
-
-    <!-- Intelligence -->
-    <div class="sb-section">
-      <div class="sb-section-header" data-sec="intelligence">
-        <span class="sb-section-icon">▶</span>
-        <span class="sb-section-title">Intelligence</span>
-      </div>
-      <div class="sb-section-body" id="sec-body-intelligence">
-        <div id="intelligence-content"></div>
-      </div>
-    </div>
-
-    <!-- Commands -->
-    <div class="sb-section">
-      <div class="sb-section-header" data-sec="commands">
-        <span class="sb-section-icon">▶</span>
-        <span class="sb-section-title">Commands</span>
-      </div>
-      <div class="sb-section-body" id="sec-body-commands">
-        <input class="panel-filter" id="cmd-filter" placeholder="Filter commands…" />
-        <div id="cmd-list"></div>
-      </div>
-    </div>
-
-    <!-- Repositories -->
-    <div class="sb-section">
-      <div class="sb-section-header" data-sec="repos">
-        <span class="sb-section-icon">▶</span>
-        <span class="sb-section-title">Repositories</span>
-      </div>
-      <div class="sb-section-body" id="sec-body-repos">
-        <div class="tree-view repos-tree" id="repos-tree"></div>
-      </div>
+    <div class="lp-pane" id="lp-controls" style="height:230px">
+      <div class="lp-header">Controls</div>
+      <div class="lp-body" id="controls-content"></div>
     </div>
 
     <div class="sidebar-resize-handle" id="sidebar-resize"></div>
@@ -165,18 +96,12 @@
 
   <!-- ─── EDITOR AREA ──────────────────────────────────────── -->
   <div class="editor-area">
-
-    <!-- Tab bar -->
     <div class="editor-tabs">
       <div class="editor-tab active" id="tab-chat" data-view="chat">
-        <svg viewBox="0 0 14 14" fill="currentColor" style="width:12px;height:12px">
-          <path d="M2 2h10a1 1 0 011 1v6a1 1 0 01-1 1H8l-3 3v-3H2a1 1 0 01-1-1V3a1 1 0 011-1z"/>
-        </svg>
+        <svg viewBox="0 0 14 14" fill="currentColor" style="width:12px;height:12px"><path d="M2 2h10a1 1 0 011 1v6a1 1 0 01-1 1H8l-3 3v-3H2a1 1 0 01-1-1V3a1 1 0 011-1z"/></svg>
         Chat
       </div>
     </div>
-
-    <!-- Chat view -->
     <div class="chat-view" id="chat-view">
       <div class="chat-header" id="chat-header">
         <span class="chat-header-title" id="chat-title">Select or create a session</span>
@@ -192,29 +117,91 @@
         <div id="working-cmd" class="working-cmd"></div>
       </div>
       <form id="composer" class="composer" autocomplete="off">
-        <textarea id="composer-input" rows="3"
-          placeholder="Message the agent… (Enter to send, Shift+Enter for newline)"></textarea>
+        <textarea id="composer-input" rows="3" placeholder="Message the agent… (Enter to send, Shift+Enter for newline)"></textarea>
         <div class="composer-actions">
           <button type="submit" class="btn-primary" id="btn-send">Send</button>
         </div>
       </form>
     </div>
-
   </div><!-- editor-area -->
 
-  <!-- ─── RIGHT PANEL (usage) ───────────────────────────────── -->
-  <div class="right-panel" id="right-panel">
-    <div class="right-panel-header">
-      <svg viewBox="0 0 14 14" fill="currentColor" style="width:11px;height:11px;flex-shrink:0">
-        <path d="M1 11L5 7l3 3 5-6" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/>
-      </svg>
-      <span>Usage</span>
-      <button class="right-panel-close" id="btn-close-right-panel" title="Close">✕</button>
+  <!-- ─── RIGHT SIDEBAR (5 panels) ────────────────────────── -->
+  <div class="right-sidebar" id="right-sidebar">
+
+    <!-- Usage panel with 6 tabs -->
+    <div class="rp-panel active" id="rpanel-usage">
+      <div class="rp-header rp-header-tabs">
+        <div class="rp-tabs" id="usage-tabs">
+          <button class="rp-tab active" data-utab="overview">Overview</button>
+          <button class="rp-tab" data-utab="daily">Daily</button>
+          <button class="rp-tab" data-utab="monthly">Monthly</button>
+          <button class="rp-tab" data-utab="models">Models</button>
+          <button class="rp-tab" data-utab="sessions-hist">Sessions</button>
+          <button class="rp-tab" data-utab="scatter">Scatter</button>
+        </div>
+      </div>
+      <div class="rp-body" id="rpanel-usage-body"><div class="rp-hint">Loading…</div></div>
     </div>
-    <div class="right-panel-body" id="right-panel-body">
-      <div class="rp-hint">Connect to see usage data…</div>
+
+    <!-- WSL Distros panel -->
+    <div class="rp-panel" id="rpanel-wsl">
+      <div class="rp-header">
+        <svg viewBox="0 0 16 16" fill="currentColor" style="width:13px;height:13px;flex-shrink:0"><rect x="1" y="2" width="14" height="10" rx="1" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M3.5 6l2.5 2-2.5 2M8.5 10h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none"/></svg>
+        WSL Distros
+        <button class="panel-title-btn" id="btn-refresh-wsl" title="Refresh" style="margin-left:auto">↻</button>
+      </div>
+      <div class="rp-body" id="wsl-list"></div>
     </div>
-  </div>
+
+    <!-- Intelligence panel -->
+    <div class="rp-panel" id="rpanel-intelligence">
+      <div class="rp-header">
+        <svg viewBox="0 0 16 16" fill="currentColor" style="width:13px;height:13px;flex-shrink:0"><path d="M6 2a4 4 0 014 4v.5h1.5a2.5 2.5 0 010 5h-7A2.5 2.5 0 012 9a2.5 2.5 0 012-2.45V6a4 4 0 014-4zm0 1.2A2.8 2.8 0 003.2 6v.88l-.58.16A1.3 1.3 0 004.5 10.5h7a1.3 1.3 0 000-2.6H9.2V6A2.8 2.8 0 006 3.2z"/></svg>
+        Intelligence
+      </div>
+      <div class="rp-body" id="intelligence-content"></div>
+    </div>
+
+    <!-- Commands panel -->
+    <div class="rp-panel" id="rpanel-commands">
+      <div class="rp-header">
+        <svg viewBox="0 0 16 16" fill="currentColor" style="width:13px;height:13px;flex-shrink:0"><path d="M7.5 1.5a6 6 0 104.33 10.16l2.47 2.47.7-.71-2.47-2.47A6 6 0 007.5 1.5zm0 1.2a4.8 4.8 0 110 9.6 4.8 4.8 0 010-9.6zM7 5.5V4H5.5v1.5H4V7h1.5v1.5H7V7h1.5V5.5H7z"/></svg>
+        Commands
+      </div>
+      <input class="panel-filter" id="cmd-filter" placeholder="Filter commands…" style="margin:6px 8px;width:calc(100% - 16px)" />
+      <div class="rp-body" id="cmd-list"></div>
+    </div>
+
+    <!-- Repositories panel -->
+    <div class="rp-panel" id="rpanel-repos">
+      <div class="rp-header">
+        <svg viewBox="0 0 16 16" fill="currentColor" style="width:13px;height:13px;flex-shrink:0"><path d="M2 2.5a.5.5 0 01.5-.5h3a.5.5 0 010 1H3v9h10V8.5a.5.5 0 011 0V13a.5.5 0 01-.5.5H2.5A.5.5 0 012 13V2.5zM8 2h5.5a.5.5 0 01.5.5V8a.5.5 0 01-1 0V3.7L8.35 8.35a.5.5 0 01-.7-.7L12.3 3H8a.5.5 0 010-1z"/></svg>
+        Repositories
+      </div>
+      <div class="rp-body tree-view repos-tree" id="repos-tree"></div>
+    </div>
+
+  </div><!-- right-sidebar -->
+
+  <!-- ─── RIGHT ACTIVITY BAR ───────────────────────────────── -->
+  <nav class="right-ab" id="right-ab" aria-label="Right Activity Bar">
+    <button class="rab-icon active" data-rpanel="usage" title="Usage Statistics">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 12L5 7l3 3 5-6" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button class="rab-icon" data-rpanel="wsl" title="WSL Distros">
+      <svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="10" rx="1" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M3.5 6l2.5 2-2.5 2M8.5 10h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none"/></svg>
+    </button>
+    <button class="rab-icon" data-rpanel="intelligence" title="Intelligence / Tool Server">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M6 2a4 4 0 014 4v.5h1.5a2.5 2.5 0 010 5h-7A2.5 2.5 0 012 9a2.5 2.5 0 012-2.45V6a4 4 0 014-4zm0 1.2A2.8 2.8 0 003.2 6v.88l-.58.16A1.3 1.3 0 004.5 10.5h7a1.3 1.3 0 000-2.6H9.2V6A2.8 2.8 0 006 3.2z"/></svg>
+    </button>
+    <button class="rab-icon" data-rpanel="commands" title="Slash Commands">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M7.5 1.5a6 6 0 104.33 10.16l2.47 2.47.7-.71-2.47-2.47A6 6 0 007.5 1.5zm0 1.2a4.8 4.8 0 110 9.6 4.8 4.8 0 010-9.6zM7 5.5V4H5.5v1.5H4V7h1.5v1.5H7V7h1.5V5.5H7z"/></svg>
+    </button>
+    <button class="rab-icon" data-rpanel="repos" title="Repositories">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.5a.5.5 0 01.5-.5h3a.5.5 0 010 1H3v9h10V8.5a.5.5 0 011 0V13a.5.5 0 01-.5.5H2.5A.5.5 0 012 13V2.5zM8 2h5.5a.5.5 0 01.5.5V8a.5.5 0 01-1 0V3.7L8.35 8.35a.5.5 0 01-.7-.7L12.3 3H8a.5.5 0 010-1z"/></svg>
+    </button>
+  </nav>
+
 </div><!-- workbench -->
 
 <!-- ═══════════════════════════════════════════════════════════
