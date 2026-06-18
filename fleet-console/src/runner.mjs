@@ -87,6 +87,19 @@ let browserEnabled = !!config.browser;
 // Central tool server: 26 code-intelligence tools (RTK, Chunkhound, Graphify, Cavemem, SSE, etc.)
 // served from Windows host via MCP HTTP. Toggled per-session from the Controls tab.
 let toolServerEnabled = !!config.toolServerUrl;
+// Per-session selection of WHICH tool-server tools Claude may call. The MCP endpoint may expose
+// many tools, but unattended sessions rarely need all of them, so we default to a curated,
+// high-leverage subset and deny the rest in canUseTool (works in every mode, including auto).
+// The UI changes this live via the `set_tools` command.
+const DEFAULT_INTEL_TOOLS = [
+  "safr", "chunkhound", "region_extract", "symbol_scope",
+  "tds", "noise_filter", "log_dedup", "stack_collapse",
+];
+// SDK names MCP tools `mcp__<serverName>__<toolName>`; our tool server is registered as "toolServer".
+const TOOL_NAME_PREFIX = "mcp__toolServer__";
+let selectedTools = new Set(
+  Array.isArray(config.tools) ? config.tools : DEFAULT_INTEL_TOOLS,
+);
 function browserServers() {
   const servers = {};
 
@@ -215,6 +228,14 @@ function detectRateLimit(message) {
 
 /** Permission callback for "ask" policy: auto-allow per the live mode, else prompt the UI. */
 async function canUseTool(toolName, input) {
+  // Per-session tool-server gate: deny any tool-server tool the user hasn't selected, regardless of
+  // mode. This runs before auto-approve so even unattended/auto sessions can't call deselected tools.
+  if (toolName.startsWith(TOOL_NAME_PREFIX)) {
+    const id = toolName.slice(TOOL_NAME_PREFIX.length);
+    if (!selectedTools.has(id)) {
+      return { behavior: "deny", message: `Tool '${id}' is disabled for this session.` };
+    }
+  }
   // Auto-approve read-only tools and any category the user has toggled on; otherwise prompt.
   // `updatedInput` must be echoed — the SDK uses it as the input to actually run the tool.
   const cat = toolCategory(toolName);
@@ -294,6 +315,12 @@ rl.on("line", (line) => {
       } else {
         emit({ type: "tool_server", enabled: toolServerEnabled });
       }
+      break;
+    case "set_tools":
+      // Update which tool-server tools Claude may call (enforced in canUseTool). No MCP reattach
+      // needed — the gate is checked per invocation, so the change applies to the next tool call.
+      selectedTools = new Set(Array.isArray(cmd.tools) ? cmd.tools : []);
+      emit({ type: "tools", tools: [...selectedTools] });
       break;
     case "set_mode": {
       const mode = String(cmd.mode || "default");
@@ -388,7 +415,8 @@ async function main() {
   options.thinking = thinkingConfig(currentThinking);
   // Stream partial messages so we can surface live "thinking…/responding…" activity (see trackActivity).
   // Without this the model can run silently for a long stretch and the UI shows only a bare "working…".
-  options.includePartialMessages = true;
+  // Disabled for unattended/headless sessions (config.partialMessages === false) to save CPU/IPC.
+  options.includePartialMessages = config.partialMessages !== false;
   // canUseTool is our single permission authority for every session — it auto-approves the
   // categories the user toggled (and read-only tools) and prompts for the rest. This is what makes
   // "auto-approve shell" actually let Bash/git run (the SDK's permissionMode only covers edits).

@@ -16,7 +16,7 @@ const ROOT = path.join(__dirname, "..");
 const DEFAULTS = {
   server: { host: "127.0.0.1", port: 4318, token: "" },
   sessions: { dir: "E:/Sessions/Claude" },
-  usage: { pollSeconds: 5 },
+  usage: { pollSeconds: 60 },
   continue: { bufferSeconds: 30, minIntervalSeconds: 300 },
   // Local roots scanned for the Repositories panel (Windows host); WSL repos come from running distros.
   repos: { localRoots: ["E:/GitHub"], maxDepth: 3 },
@@ -24,6 +24,15 @@ const DEFAULTS = {
   browser: { enabled: false },
   // Centralised tool server (MCP HTTP on the Windows host, served to all distros).
   toolServer: { enabled: false, port: 4319 },
+  // Token-saving defaults applied to UNATTENDED (auto / full-access) sessions only. Interactive
+  // sessions keep adaptive thinking, partial-message streaming, and the plan default model. Each
+  // value is still overridable per session from the Controls tab.
+  unattended: {
+    thinking: "off",        // off | adaptive — extended thinking for unattended turns (off saves output tokens)
+    maxTurns: 0,            // 0 = unlimited; >0 caps turns an unattended session may run
+    model: "",              // optional cheaper model for unattended work (e.g. a Haiku id); "" = plan default
+    partialMessages: false, // stream per-token deltas for unattended sessions (off saves CPU/IPC, no model tokens)
+  },
 };
 
 /** Coerce a scalar YAML value to a JS string/number/boolean/null. */
@@ -115,6 +124,11 @@ function applyEnv(cfg) {
   if (process.env.FLEET_BROWSER) cfg.browser.enabled = /^(1|true|yes|on)$/i.test(process.env.FLEET_BROWSER);
   if (process.env.TOOL_SERVER) cfg.toolServer.enabled = /^(1|true|yes|on)$/i.test(process.env.TOOL_SERVER);
   if (envNum(process.env.TOOL_SERVER_PORT) !== undefined) cfg.toolServer.port = envNum(process.env.TOOL_SERVER_PORT);
+  if (!cfg.unattended) cfg.unattended = {};
+  if (process.env.UNATTENDED_THINKING) cfg.unattended.thinking = process.env.UNATTENDED_THINKING === "adaptive" ? "adaptive" : "off";
+  if (envNum(process.env.UNATTENDED_MAX_TURNS) !== undefined) cfg.unattended.maxTurns = envNum(process.env.UNATTENDED_MAX_TURNS);
+  if (process.env.UNATTENDED_MODEL) cfg.unattended.model = process.env.UNATTENDED_MODEL;
+  if (process.env.UNATTENDED_PARTIAL_MESSAGES) cfg.unattended.partialMessages = /^(1|true|yes|on)$/i.test(process.env.UNATTENDED_PARTIAL_MESSAGES);
   return cfg;
 }
 

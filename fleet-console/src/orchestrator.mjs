@@ -39,6 +39,12 @@ const REPO_LOCAL_ROOTS = (config.repos && Array.isArray(config.repos.localRoots)
 const REPO_MAX_DEPTH = (config.repos && config.repos.maxDepth) || 3;
 const TOOL_SERVER_ENABLED = !!(config.toolServer && config.toolServer.enabled);
 const TOOL_SERVER_PORT = (config.toolServer && config.toolServer.port) || 4319;
+// Curated default selection of tool-server tools for new sessions (high-leverage, zero-setup, no
+// embeddings service required). Mirrors the runner's DEFAULT_INTEL_TOOLS and the MCP adapter's
+// DEFAULT_TOOLS. A session may override this per-session from the Intelligence tab.
+const DEFAULT_INTEL_TOOLS = (config.toolServer && Array.isArray(config.toolServer.defaultTools) && config.toolServer.defaultTools.length)
+  ? config.toolServer.defaultTools.slice()
+  : ["safr", "chunkhound", "region_extract", "symbol_scope", "tds", "noise_filter", "log_dedup", "stack_collapse"];
 
 // Windows host IP as seen from WSL — resolved once at startup so all WSL runners can reach the
 // tool server over HTTP MCP without any per-distro installation.
@@ -198,6 +204,7 @@ function sessionSummary(s) {
     thinking: s.thinking || "adaptive",
     browser: !!s.browser,
     toolServer: s.toolServer != null ? !!s.toolServer : !!(s.runnerConfig && s.runnerConfig.toolServerUrl),
+    tools: Array.isArray(s.tools) ? s.tools : DEFAULT_INTEL_TOOLS,
     policy: s.policy,
     status: s.status,
     resetAt: s.resetAt,
@@ -356,6 +363,8 @@ function sessionRecordObject(s) {
     effort: s.effort || null,
     thinking: s.thinking || "adaptive",
     browser: !!s.browser,
+    toolServer: !!s.toolServer,
+    tools: Array.isArray(s.tools) ? s.tools : DEFAULT_INTEL_TOOLS,
     sdkSessionId: s.sdkSessionId || null,
     status: s.status,
     createdAt: new Date(s.createdAt).toISOString(),
@@ -473,6 +482,123 @@ function listHistory() {
   return out;
 }
 
+/**
+ * Aggregate historical usage from every saved session.json in SESSIONS_DIR.
+ * Returns: { sessions[], byDay{}, byMonth{}, byModel{}, totals{} }
+ *
+ * byDay / byMonth keys are ISO date strings ("2026-06-16" / "2026-06").
+ * Each bucket: { costUsd, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, turns, count }
+ * byModel key is the model id string; same bucket shape + { name } alias.
+ */
+function computeUsageHistory() {
+  const sessions = [];
+  const byDay = {};
+  const byMonth = {};
+  const byModel = {};
+  const totals = { costUsd: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, turns: 0, sessionCount: 0 };
+
+  function addToBucket(map, key, cost, inp, out, cacheRead, cacheCre, turns) {
+    if (!map[key]) map[key] = { costUsd: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, turns: 0, count: 0 };
+    const b = map[key];
+    b.costUsd += cost; b.inputTokens += inp; b.outputTokens += out;
+    b.cacheReadTokens += cacheRead; b.cacheCreationTokens += cacheCre;
+    b.turns += turns; b.count++;
+  }
+
+  for (const hostKind of listSubdirs(SESSIONS_DIR)) {
+    const hkDir = path.join(SESSIONS_DIR, hostKind);
+    for (const group of listSubdirs(hkDir)) {
+      const grpDir = path.join(hkDir, group);
+      for (const repo of listSubdirs(grpDir)) {
+        const repoDir = path.join(grpDir, repo);
+        for (const title of listSubdirs(repoDir)) {
+          const dir = path.join(repoDir, title);
+          let meta;
+          try { meta = JSON.parse(fs.readFileSync(path.join(dir, "session.json"), "utf8")); } catch { continue; }
+          const lr = meta.lastResult;
+          if (!lr || lr.cost == null) continue;
+          const u = lr.usage || {};
+          const cost = lr.cost || 0;
+          const inp = u.input_tokens || 0;
+          const out = u.output_tokens || 0;
+          const cacheRead = u.cache_read_input_tokens || 0;
+          const cacheCre = u.cache_creation_input_tokens || 0;
+          const turns = lr.turns || 0;
+          const dt = new Date(meta.createdAt || 0);
+          const day = dt.toISOString().slice(0, 10);
+          const month = dt.toISOString().slice(0, 7);
+          const model = meta.model || "unknown";
+          addToBucket(byDay, day, cost, inp, out, cacheRead, cacheCre, turns);
+          addToBucket(byMonth, month, cost, inp, out, cacheRead, cacheCre, turns);
+          if (!byModel[model]) byModel[model] = { costUsd: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, turns: 0, count: 0 };
+          addToBucket(byModel, model, cost, inp, out, cacheRead, cacheCre, turns);
+          totals.costUsd += cost; totals.inputTokens += inp; totals.outputTokens += out;
+          totals.cacheReadTokens += cacheRead; totals.cacheCreationTokens += cacheCre;
+          totals.turns += turns; totals.sessionCount++;
+          sessions.push({
+            label: meta.label || title, createdAt: meta.createdAt, day, month,
+            host: meta.host, distro: meta.distro || null, repo,
+            model, mode: meta.mode || null, policy: meta.policy || null,
+            status: meta.status || null, turns,
+            costUsd: cost, inputTokens: inp, outputTokens: out,
+            cacheReadTokens: cacheRead, cacheCreationTokens: cacheCre,
+          });
+        }
+      }
+    }
+  }
+
+  // Also mine raw Claude JSONL files from ~/.claude/projects/ for sessions not yet in fleet-console.
+  // This integrates ccusage-style per-exchange data from the Claude SDK's own transcript store.
+  const claudeProjects = path.join(os.homedir(), ".claude", "projects");
+  if (fs.existsSync(claudeProjects)) {
+    for (const proj of listSubdirs(claudeProjects)) {
+      const projDir = path.join(claudeProjects, proj);
+      let projFiles;
+      try { projFiles = fs.readdirSync(projDir).filter((f) => f.endsWith(".jsonl")); } catch { continue; }
+      for (const jf of projFiles) {
+        const sessionId = jf.replace(".jsonl", "");
+        // Skip sessions already covered by fleet-console (we matched by pattern: session records include sdkSessionId).
+        let text;
+        try { text = fs.readFileSync(path.join(projDir, jf), "utf8"); } catch { continue; }
+        let sessInp = 0, sessOut = 0, sessCacheRead = 0, sessCacheCre = 0, sessTs = null, sessModel = "unknown";
+        // Scan assistant events with usage — each line is a JSON object.
+        // We read the LAST assistant usage event (cumulative for the session).
+        for (const rawLine of text.split(/\r?\n/)) {
+          if (!rawLine) continue;
+          let ev;
+          try { ev = JSON.parse(rawLine); } catch { continue; }
+          if (ev.type === "assistant" && ev.message && ev.message.usage) {
+            const u = ev.message.usage;
+            // The last event is cumulative for the whole session.
+            sessInp = u.input_tokens || sessInp;
+            sessOut = u.output_tokens || sessOut;
+            sessCacheRead = u.cache_read_input_tokens || sessCacheRead;
+            sessCacheCre = u.cache_creation_input_tokens || sessCacheCre;
+            if (ev.message.model) sessModel = ev.message.model;
+            if (ev.message.created_at) sessTs = ev.message.created_at;
+          }
+        }
+        if (!sessInp && !sessOut) continue; // no usage data
+        const dt = new Date(sessTs || 0);
+        const day = dt.toISOString().slice(0, 10);
+        const month = dt.toISOString().slice(0, 7);
+        // Estimate cost using a rough Sonnet/Opus proxy (actual pricing requires a full pricing table).
+        // We mark these "raw" so the UI can explain them separately.
+        addToBucket(byDay, day, 0, sessInp, sessOut, sessCacheRead, sessCacheCre, 0);
+        addToBucket(byMonth, month, 0, sessInp, sessOut, sessCacheRead, sessCacheCre, 0);
+        addToBucket(byModel, sessModel, 0, sessInp, sessOut, sessCacheRead, sessCacheCre, 0);
+        totals.inputTokens += sessInp; totals.outputTokens += sessOut;
+        totals.cacheReadTokens += sessCacheRead; totals.cacheCreationTokens += sessCacheCre;
+      }
+    }
+  }
+
+  // Sort sessions newest-first.
+  sessions.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+  return { sessions, byDay, byMonth, byModel, totals };
+}
+
 /** Read one saved session for display: { meta (session.json), markdown (conversation.md) }. */
 function readHistoryItem(rel) {
   const dir = path.resolve(path.join(SESSIONS_DIR, String(rel || "")));
@@ -562,12 +688,16 @@ function readInstructionsMessage(s) {
 
 /** Persist every session whose log changed since the last sweep. */
 function persistDirtySessions() {
+  let flushed = false;
   for (const s of sessions.values()) {
     if (s.dirty) {
       s.dirty = false;
       persistSession(s);
+      flushed = true;
     }
   }
+  // Invalidate the usage-history cache whenever sessions are written to disk.
+  if (flushed) usageHistoryCache = null;
 }
 
 function writeToRunner(s, obj) {
@@ -814,6 +944,121 @@ async function computeRepos() {
 
 let reposCache = { at: 0, data: [] };
 let reposComputing = false;
+let usageHistoryCache = null; // { at: ms, data: computeUsageHistory() }
+let exchangeHistoryCache = null; // { at: ms, data: computeExchangeHistory() }
+
+// ---------------------------------------------------------------------------
+// Exchange-level history — reads ALL assistant events from every JSONL file
+// in ~/.claude/projects/ to produce per-exchange scatter data and accurate
+// per-day/week/month aggregates across the whole account.
+// ---------------------------------------------------------------------------
+
+/** ISO week string e.g. "2026-W24" from a Date object. */
+function isoWeek(d) {
+  const dc = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = dc.getUTCDay() || 7;
+  dc.setUTCDate(dc.getUTCDate() + 4 - day);
+  const year = dc.getUTCFullYear();
+  const start = new Date(Date.UTC(year, 0, 1));
+  const week = Math.ceil(((dc - start) / 86400000 + 1) / 7);
+  return `${year}-W${String(week).padStart(2, "0")}`;
+}
+
+/**
+ * Parse all JSONL files from ~/.claude/projects/ and return per-exchange data.
+ * Each exchange = one assistant response (deduplicated by ev.uuid so streaming
+ * partial re-sends don't double-count).
+ *
+ * Returns: { exchanges[], byDay{}, byWeek{}, byMonth{}, byModel{}, totals{}, projectNames{} }
+ */
+function computeExchangeHistory() {
+  const exchanges = [];
+  const byDay = {};
+  const byWeek = {};
+  const byMonth = {};
+  const byModel = {};
+  const totals = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, exchanges: 0 };
+  const projectNames = {}; // encoded dir name → friendly label
+
+  function add(map, key) {
+    if (!map[key]) map[key] = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, count: 0 };
+    return map[key];
+  }
+  function accumulate(bucket, inp, out, cr, cc) {
+    bucket.inputTokens += inp; bucket.outputTokens += out;
+    bucket.cacheReadTokens += cr; bucket.cacheCreationTokens += cc;
+    bucket.count++;
+  }
+
+  const claudeProjects = path.join(os.homedir(), ".claude", "projects");
+  if (!fs.existsSync(claudeProjects)) return { exchanges, byDay, byWeek, byMonth, byModel, totals, projectNames };
+
+  for (const proj of listSubdirs(claudeProjects)) {
+    // Build a friendly project name from the encoded dir name:
+    // "e--GitHub-kalpana-vigyaan-claude-orchestrator" → "claude-orchestrator"
+    const parts = proj.replace(/^[a-z]--/, "").split("-");
+    const friendlyName = parts.slice(-2).join("-").replace(/^GitHub-/, "");
+    projectNames[proj] = friendlyName || proj;
+
+    const projDir = path.join(claudeProjects, proj);
+    let files;
+    try { files = fs.readdirSync(projDir).filter((f) => f.endsWith(".jsonl")); } catch { continue; }
+
+    for (const jf of files) {
+      let text;
+      try { text = fs.readFileSync(path.join(projDir, jf), "utf8"); } catch { continue; }
+
+      const seenUuids = new Set();
+      for (const rawLine of text.split(/\r?\n/)) {
+        // Fast pre-filter before JSON.parse (saves ~80% parse time on large files)
+        if (!rawLine || !rawLine.includes('"assistant"') || !rawLine.includes('"output_tokens"')) continue;
+        let ev;
+        try { ev = JSON.parse(rawLine); } catch { continue; }
+        if (ev.type !== "assistant" || !ev.message?.usage) continue;
+
+        // Deduplicate by top-level uuid (unique per exchange turn)
+        const uid = ev.uuid || ev.requestId || null;
+        if (uid) {
+          if (seenUuids.has(uid)) continue;
+          seenUuids.add(uid);
+        }
+
+        const u = ev.message.usage;
+        const inp = u.input_tokens || 0;
+        const out = u.output_tokens || 0;
+        const cr = u.cache_read_input_tokens || 0;
+        const cc = u.cache_creation_input_tokens || 0;
+        const model = ev.message.model || "unknown";
+
+        // Prefer top-level timestamp (ev.timestamp), fall back to message.created_at
+        const tsStr = ev.timestamp || ev.message?.created_at || null;
+        if (!tsStr) continue;
+        const tsMs = Date.parse(tsStr);
+        if (!tsMs || isNaN(tsMs)) continue;
+
+        const d = new Date(tsMs);
+        const day = d.toISOString().slice(0, 10);
+        const month = d.toISOString().slice(0, 7);
+        const week = isoWeek(d);
+
+        accumulate(add(byDay, day), inp, out, cr, cc);
+        accumulate(add(byWeek, week), inp, out, cr, cc);
+        accumulate(add(byMonth, month), inp, out, cr, cc);
+        accumulate(add(byModel, model), inp, out, cr, cc);
+        totals.inputTokens += inp; totals.outputTokens += out;
+        totals.cacheReadTokens += cr; totals.cacheCreationTokens += cc;
+        totals.exchanges++;
+
+        if (exchanges.length < 8000) {
+          exchanges.push({ tsMs, day, week, month, inp, out, cr, cc, model, proj: friendlyName });
+        }
+      }
+    }
+  }
+
+  exchanges.sort((a, b) => a.tsMs - b.tsMs);
+  return { exchanges, byDay, byWeek, byMonth, byModel, totals, projectNames };
+}
 
 // ---------------------------------------------------------------------------
 // session lifecycle
@@ -830,11 +1075,27 @@ function createSession(spec) {
   const policy = explicitPolicy || (mode === "bypassPermissions" ? "auto" : "ask");
   const permissionMode = MODES[mode].permissionMode; // plan vs default; execution is via autoApprove
   const autoApprove = MODES[mode].approve.slice(); // categories canUseTool runs without asking
-  // Reasoning effort + extended thinking.
+  // Unattended (full-access "auto") sessions run with no human watching, so they get token-saving
+  // defaults from config.unattended. Each is still overridable per session from the Controls tab.
+  const isUnattended = policy === "auto";
+  const U = config.unattended || {};
+  // Reasoning effort + extended thinking. Explicit on/off is honored; otherwise unattended sessions
+  // default thinking OFF (no reader for the reasoning) while interactive sessions stay adaptive.
   const effort = spec.effort ? String(spec.effort) : null; // low|medium|high|xhigh|max|null(default)
-  const thinking = spec.thinking === "off" ? "off" : "adaptive";
+  const defThinking = isUnattended ? (U.thinking === "adaptive" ? "adaptive" : "off") : "adaptive";
+  const thinking = spec.thinking === "off" ? "off" : spec.thinking === "adaptive" ? "adaptive" : defThinking;
+  // Cheaper default model for unattended work (e.g. Haiku) when the caller didn't pick one.
+  const model = spec.model || (isUnattended ? (U.model || "") : "") || null;
+  // Cap how long an unattended session may run after an auto-continue (0 = unlimited).
+  const maxTurns = spec.maxTurns || (isUnattended ? (Number(U.maxTurns) || 0) : 0) || undefined;
+  // Stream per-token deltas only when a human may be watching (interactive), or when explicitly
+  // enabled for unattended sessions. Saves CPU/IPC for headless runs (no model-token effect).
+  const partialMessages = isUnattended ? U.partialMessages === true : true;
   // Browser / UI testing toolset (Playwright MCP). Per-session opt-in; default from config.
   const browser = spec.browser != null ? !!spec.browser : !!(config.browser && config.browser.enabled);
+  // Central tool server: per-session on/off (default = global config) plus which tools are selected.
+  const toolServer = spec.toolServer != null ? !!spec.toolServer : TOOL_SERVER_ENABLED;
+  const tools = Array.isArray(spec.tools) ? spec.tools.slice() : DEFAULT_INTEL_TOOLS.slice();
   const host = spec.host === "wsl" ? "wsl" : "local";
   const label = spec.label || spec.cwd || id;
 
@@ -882,7 +1143,7 @@ function createSession(spec) {
 
   const runnerConfig = {
     cwd: spec.cwd,
-    model: spec.model || null,
+    model: model,
     permissionMode,
     policy,
     additionalDirectories: [
@@ -891,12 +1152,14 @@ function createSession(spec) {
     ],
     initialPrompt: spec.initialPrompt || "",
     systemPromptAppend: autonomyNote + instructionsNote,
-    maxTurns: spec.maxTurns || undefined,
+    maxTurns: maxTurns,
     autoApprove,
     browser,
     effort,
     thinking,
+    partialMessages,
     toolServerUrl: toolServerUrl(host),
+    tools,
     claudePath: claudePath || undefined,
     // Resume a saved conversation: by SDK session id when known, else continue the most recent
     // conversation in this cwd (covers sessions created before ids were captured).
@@ -912,13 +1175,15 @@ function createSession(spec) {
     runnerPath,
     node: nodeBin,
     cwd: spec.cwd,
-    model: spec.model || null,
+    model: model,
     mode,
     permissionMode,
     autoApprove,
     effort,
     thinking,
     browser,
+    toolServer,
+    tools,
     policy,
     autoContinue: spec.autoContinue !== false,
     status: "starting",
@@ -1005,6 +1270,8 @@ function resumeSession(rel) {
     effort: meta.effort || undefined,
     thinking: meta.thinking || undefined,
     browser: meta.browser != null ? meta.browser : undefined,
+    toolServer: meta.toolServer != null ? meta.toolServer : undefined,
+    tools: Array.isArray(meta.tools) ? meta.tools : undefined,
     sessionDirOverride: dir,
     preload,
     sdkSessionId: meta.sdkSessionId || null,
@@ -1161,6 +1428,12 @@ function handleRunnerEvent(s, event) {
       break;
     case "tool_server":
       s.toolServer = !!event.enabled;
+      break;
+    case "tools":
+      if (Array.isArray(event.tools)) {
+        s.tools = event.tools;
+        s.dirty = true;
+      }
       break;
     case "effort":
       s.effort = event.effort || null;
@@ -1325,6 +1598,28 @@ const server = http.createServer(async (req, res) => {
   // Session history (browse past sessions saved on disk)
   if (pathname === "/api/history" && method === "GET") {
     sendJson(res, 200, { root: SESSIONS_DIR, sessions: listHistory() });
+    return;
+  }
+
+  // Exchange-level history — all assistant exchanges from ~/.claude/projects/ JSONL files.
+  // Powers the Scatter tab. Cached for 120 s (parsing ~30 MB is fast but not instant).
+  if (pathname === "/api/usage/exchanges" && method === "GET") {
+    const now_ = Date.now();
+    if (!exchangeHistoryCache || now_ - exchangeHistoryCache.at > 120000) {
+      exchangeHistoryCache = { at: now_, data: computeExchangeHistory() };
+    }
+    sendJson(res, 200, exchangeHistoryCache.data);
+    return;
+  }
+
+  // Usage history — aggregated token/cost data from all saved sessions + raw JSONL files.
+  // Powers the Usage tab. Cached for 30 s so repeated tab opens are fast.
+  if (pathname === "/api/usage/history" && method === "GET") {
+    const now_ = Date.now();
+    if (!usageHistoryCache || now_ - usageHistoryCache.at > 30000) {
+      usageHistoryCache = { at: now_, data: computeUsageHistory() };
+    }
+    sendJson(res, 200, usageHistoryCache.data);
     return;
   }
   if (pathname === "/api/repos" && method === "GET") {
@@ -1573,6 +1868,13 @@ const server = http.createServer(async (req, res) => {
       const enabled = !!body.enabled;
       s.toolServer = enabled; // optimistic
       const ok = writeToRunner(s, { type: "set_tool_server", enabled });
+      sendJson(res, 200, { ok });
+    } else if (verb === "set-tools") {
+      // Update which tool-server tools Claude may call for this session (runner echoes "tools").
+      const tools = Array.isArray(body.tools) ? body.tools.map(String) : [];
+      s.tools = tools; // optimistic; persisted in the session record
+      s.dirty = true;
+      const ok = writeToRunner(s, { type: "set_tools", tools });
       sendJson(res, 200, { ok });
     } else if (verb === "set-model") {
       const model = body.model ? String(body.model) : null;

@@ -14,12 +14,21 @@ sessions:
   dir: "E:/Sessions/Claude"   # where per-session folders (json + markdown + instructions) live
 
 usage:
-  pollSeconds: 5          # how often to fetch fresh account usage + reset info (spawns a tiny
+  pollSeconds: 60         # how often to fetch fresh account usage + reset info (spawns a tiny
                           # throwaway SDK session each time; raise this to reduce overhead)
 
 continue:
   bufferSeconds: 30       # wait this long after the reset before auto-continuing
   minIntervalSeconds: 300 # minimum gap between auto-continues for a session
+
+# Token-saving defaults applied to UNATTENDED (full-access "Auto") sessions only. Interactive
+# sessions keep adaptive thinking, live partial-message streaming, and the plan default model.
+# Every value is still overridable per session from the Controls tab.
+unattended:
+  thinking: "off"         # off | adaptive — extended thinking for unattended turns (off saves output tokens)
+  maxTurns: 0             # 0 = unlimited; >0 caps turns an unattended session may run after a continue
+  model: ""               # optional cheaper model id for unattended work (e.g. a Haiku model); "" = plan default
+  partialMessages: false  # stream per-token deltas for unattended sessions (off saves CPU/IPC; no model tokens)
 
 repos:
   localRoots: ["E:/GitHub"]  # Windows folders scanned for the Repositories panel (git repos + status)
@@ -31,7 +40,18 @@ browser:
                           # session in the Controls tab. Prereq: `npx playwright install chromium`.
 
 toolServer:
-  enabled: false          # attach 26 centralised code-intelligence tools (RTK, Chunkhound, Graphify,
-                          # Cavemem, SSE, DHL, LIC, TDS, COG, etc.) to every session via MCP HTTP.
+  enabled: false          # attach centralised code-intelligence tools (RTK, Chunkhound, Graphify,
+                          # Cavemem, SSE, DHL, LIC, TDS, COG, etc.) to sessions via MCP HTTP.
                           # Run scripts/start-tool-server.ps1 first; no per-distro install needed.
+                          # New sessions start with the curated default tool set selected (below);
+                          # change the per-session selection in the Intelligence tab.
   port: 4319              # MCP HTTP port the adapter listens on
+  # defaultTools:        # optional: override the curated default selection for NEW sessions.
+  #   - safr             # (leave commented to use the built-in 8-tool default)
+  #   - chunkhound
+  #   - region_extract
+  #   - symbol_scope
+  #   - tds
+  #   - noise_filter
+  #   - log_dedup
+  #   - stack_collapse
