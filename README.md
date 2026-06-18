@@ -22,11 +22,16 @@ A zero-build web application that **owns** multiple Claude Agent SDK sessions an
 - Live account usage bar with per-window utilization and reset countdowns
 - Auto-continuation after the 5-hour reset for unattended sessions
 - Mode / model / effort / thinking switchable live without restarting
+- **Multi-repo support**: work with multiple repositories in a single session (add at creation time or mid-session)
 - WSL2 session support (runner staged inside the distro, no UNC issues)
 - Session history saved as `session.json` + `conversation.md`
 - Per-session instruction files (`.md`) the agent reads and follows
 - Tool-server integration: 26 code-intelligence MCP tools attached per session
 - **Usage Statistics tab**: daily/weekly/monthly charts and scatter subplots from all `~/.claude/projects/` JSONL data (your full Claude Code account history)
+
+**UI Preview:**
+
+![fleet-console layout with multi-repo controls](docs/screenshots/fleet-console-layout.svg)
 
 → **[fleet-console/README.md](fleet-console/README.md)**
 
@@ -41,6 +46,40 @@ A VS Code extension + orchestrator that monitors many Claude Code windows simult
 A Rust gRPC service exposing 26 code-intelligence tools over MCP HTTP. Attached to fleet-console sessions to let Claude work with **slices** of files and logs instead of whole files — reducing input tokens by up to 88% on typical operations.
 
 → **[tool-server/README.md](tool-server/README.md)**
+
+---
+
+## Multi-Repository Sessions
+
+One of fleet-console's most powerful features is **multi-repo support**: a single Claude session can work with code from multiple repositories simultaneously. This is useful for:
+
+- **Monorepos**: work with related packages/services in one conversation
+- **Cross-repo refactoring**: change code in library A and all its dependent projects (B, C, D) at once
+- **Documentation + code**: include docs repos alongside your source repos
+- **Shared utilities**: reference common utility libraries while developing features
+
+### How to use it
+
+**When creating a new session** — add paths in the "Extra repos / directories" field:
+```
+/home/user/main-repo         (primary working directory)
+/home/user/lib-utils         (additional repos Claude can read/edit)
+/home/user/lib-analytics
+/mnt/c/GitHub/shared-lib
+```
+
+**During an active session** — use the **Directories** section in the Controls panel:
+1. View the current working directory (immutable, marked `cwd`)
+2. See all additional directories Claude has access to
+3. Click **✕** to remove a directory mid-session
+4. Type a path and press **Add** (or Enter) to add a new directory on the fly
+
+The working directory (`cwd`) is fixed for the session. All additional directories are optional and can be changed without restarting Claude.
+
+### Works everywhere
+- **Local Windows**: Use Windows paths (`E:/GitHub/repo`)
+- **WSL sessions**: Use absolute paths (`/home/user/repo`)  
+- **Mixed**: One session on Windows, another in WSL — paths are adapted automatically
 
 ---
 
