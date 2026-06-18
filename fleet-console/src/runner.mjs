@@ -322,6 +322,22 @@ rl.on("line", (line) => {
       selectedTools = new Set(Array.isArray(cmd.tools) ? cmd.tools : []);
       emit({ type: "tools", tools: [...selectedTools] });
       break;
+    case "set_directories": {
+      // Add/remove extra directories the agent can access. Try the SDK live-update first; if the
+      // method isn't available (older SDK), update config so the next runner restart picks it up.
+      const dirs = Array.isArray(cmd.directories) ? cmd.directories : [];
+      config.additionalDirectories = dirs;
+      if (sdkSession && typeof sdkSession.setAdditionalDirectories === "function") {
+        sdkSession
+          .setAdditionalDirectories(dirs)
+          .then(() => emit({ type: "directories", directories: dirs }))
+          .catch((e) => emit({ type: "log", level: "warn", message: `set directories failed: ${e}` }));
+      } else {
+        emit({ type: "directories", directories: dirs });
+        emit({ type: "log", level: "info", message: "Extra directories updated — restart the runner to apply." });
+      }
+      break;
+    }
     case "set_mode": {
       const mode = String(cmd.mode || "default");
       currentMode = mode; // SDK plan vs default

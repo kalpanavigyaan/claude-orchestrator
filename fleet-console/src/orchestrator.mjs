@@ -205,6 +205,7 @@ function sessionSummary(s) {
     browser: !!s.browser,
     toolServer: s.toolServer != null ? !!s.toolServer : !!(s.runnerConfig && s.runnerConfig.toolServerUrl),
     tools: Array.isArray(s.tools) ? s.tools : DEFAULT_INTEL_TOOLS,
+    additionalDirectories: Array.isArray(s.additionalDirectories) ? s.additionalDirectories : [],
     policy: s.policy,
     status: s.status,
     resetAt: s.resetAt,
@@ -296,7 +297,7 @@ function applyUsageReport(report) {
 
 // Bump on any public/ UI change. The client compares its own APP_BUILD to this and shows a
 // "you're running an old version, refresh" banner on mismatch — ends the "is my page stale?" guessing.
-const BUILD = "2026-06-16e";
+const BUILD = "2026-06-17a";
 
 function fleetSnapshot() {
   return {
@@ -1185,6 +1186,7 @@ function createSession(spec) {
     toolServer,
     tools,
     policy,
+    additionalDirectories: Array.isArray(spec.additionalDirectories) ? spec.additionalDirectories.slice() : [],
     autoContinue: spec.autoContinue !== false,
     status: "starting",
     ready: false,
@@ -1875,6 +1877,15 @@ const server = http.createServer(async (req, res) => {
       s.tools = tools; // optimistic; persisted in the session record
       s.dirty = true;
       const ok = writeToRunner(s, { type: "set_tools", tools });
+      sendJson(res, 200, { ok });
+    } else if (verb === "set-directories") {
+      // Add/remove extra directories Claude can access in this session.
+      // agentInstructionsDir is always appended so instruction files remain accessible.
+      const dirs = Array.isArray(body.directories) ? body.directories.map(String).filter(Boolean) : [];
+      s.additionalDirectories = dirs;
+      s.runnerConfig.additionalDirectories = [...dirs, s.agentInstructionsDir];
+      s.dirty = true;
+      const ok = writeToRunner(s, { type: "set_directories", directories: [...dirs, s.agentInstructionsDir] });
       sendJson(res, 200, { ok });
     } else if (verb === "set-model") {
       const model = body.model ? String(body.model) : null;
