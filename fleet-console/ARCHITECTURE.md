@@ -1,14 +1,158 @@
 # Fleet Console — Architecture
 
-An all-Node web application that **owns** multiple Claude agent sessions and lets you drive
-them interactively from any device (laptop or iPad). Each session is a real Claude Agent SDK
-query that this app spawns and controls — so there is no VS Code panel to puppet and no CDP
-hacks. You get tabbed interactive chats, approval prompts surfaced as web modals, and
-automatic continuation after the 5-hour usage reset for sessions you leave running.
+Fleet Console is an all-Node web application that **owns** Claude Agent SDK sessions and lets you drive them from any browser. Each session is a direct `query()` against the Agent SDK — no VS Code panels, no CDP hacks, no editor automation of any kind.
 
-> This is original work. WotchCode was looked at only for inspiration on the *idea* of
-> owning sessions instead of automating an editor; no code, naming, or structure is taken
-> from it.
+---
+
+## System overview
+
+```
+         Browser (laptop / iPad Safari / any device)
+         ┌───────────────────────────────────────────────────────┐
+         │  Header: connection · account reset · 📊 Usage        │
+         │  Usage bar: 5h / weekly / daily utilization cards      │
+         │  ─────────────────────────────────────────────────     │
+         │  Left          │  Center          │  Right             │
+         │  ─ WSL distros │  Markdown chat   │  Controls tab      │
+         │  ─ Sessions    │  ─ tool calls    │  Intelligence tab  │
+         │  ─ Repos       │  Composer        │  Commands tab      │
+         │  ─ Past sessions│  Status bar      │                    │
+         └───────────────────────────────────────────────────────┘
+              │  REST POST (actions)           ▲  SSE (events)
+              ▼                                │
+         ┌───────────────────────────────────────────────────────┐
+         │           ORCHESTRATOR  src/orchestrator.mjs           │
+         │  • HTTP server (Node built-ins only, no framework)     │
+         │  • Session registry + state + persistence to disk       │
+         │  • Spawns one RUNNER child process per session          │
+         │  • Routes messages: browser POST → runner stdin         │
+         │  •                  runner stdout → session state + SSE │
+         │  • 5-hour reset scheduler (auto-continue)              │
+         │  • Usage-fetcher (account-wide /usage poll)            │
+         │  • Repos scanner (git status, cached 12 s)             │
+         │  • /api/usage/history + /api/usage/exchanges           │
+         └───────────────────────────────────────────────────────┘
+              │  JSON lines over stdio (one child per session)
+     ┌────────┼─────────────────────────┐
+     ▼        ▼                         ▼
+┌─────────┐ ┌─────────┐          ┌──────────────────────────┐
+│ RUNNER  │ │ RUNNER  │   ...    │ RUNNER  (inside WSL)     │
+│  host   │ │  host   │          │  wsl -d <distro> node …  │
+│ query() │ │ query() │          │  query()                 │
+└─────────┘ └─────────┘          └──────────────────────────┘
+  each runner owns one @anthropic-ai/claude-agent-sdk session
+  (authenticated via Claude Code subscription — no API key)
+```
+
+---
+
+## Runner — `src/runner.mjs`
+
+One Node child process per session. Owns exactly one Agent SDK session.
+
+**Prompt delivery.** `query({ prompt, options })` where `prompt` is a **pushable async-iterable** ([`asyncQueue.mjs`](src/asyncQueue.mjs)) so the orchestrator can feed user messages mid-session (real multi-turn interactivity).
+
+**SDK options set at startup:**
+
+| Option | Value |
+|---|---|
+| `cwd` | Working directory |
+| `additionalDirectories` | Read scope: repo paths + per-session instructions dir |
+| `model` | From session config; null = plan default |
+| `maxTurns` | Session max (default unlimited for interactive; configurable for unattended) |
+| `permissionMode` | `plan` (read-only) or `default` (execution governed by `canUseTool`) |
+| `systemPrompt` | `{ type: "preset", preset: "claude_code", append: autonomyNote + instructionsNote }` |
+| `thinking` | `{ type: "disabled" }` (off) or `{ type: "adaptive" }` |
+| `includePartialMessages` | `true` for interactive; `false` for unattended (saves IPC) |
+| `mcpServers` | Browser (Playwright MCP) and/or tool server (MCP HTTP), when enabled |
+
+**Permissions via `canUseTool`.** The single permission authority for all modes:
+1. **Tool-server gate**: any `mcp__toolServer__<name>` tool not in the per-session `selectedTools` set is denied — enforced even in Auto/bypass mode.
+2. **Auto-approve by category**: read tools always pass; edits/shell/other pass if in `autoApprove` set (derived from mode).
+3. **Ask policy**: everything else blocks and emits `approval_request` to the UI (web modal).
+
+**Live control (stdin commands):**
+`user` · `continue` · `approval` · `set_mode` · `set_model` · `set_effort` · `set_thinking` · `set_browser` · `set_tool_server` · `set_tools` · `set_auto_approve` · `interrupt` · `shutdown`
+
+**Stdout events:**
+`status` · `assistant` · `tool_use` · `approval_request` · `result` · `rate_limit` · `models` · `commands` · `mode` · `model` · `effort` · `thinking` · `browser` · `tool_server` · `tools` · `session_id` · `activity` · `log`
+
+**Rate-limit detection.** Only `rate_limit_event.rate_limit_info.status === "rejected"` counts as a true limit; other rate events are ignored. This prevents false-positive auto-continues.
+
+---
+
+## Orchestrator — `src/orchestrator.mjs`
+
+**Session registry.** In-memory map of sessions. Each session tracks: id, label, host, distro, cwd, model, mode, policy, permissionMode, effort, thinking, toolServer, tools, status, resetAt, nextContinueAt, lastResult, messages (capped at 500), pendingApprovals.
+
+**Spawning runners.** Host adapters in `src/hosts.mjs`:
+- `local` → Node child process via `child_process.spawn`
+- `wsl` → `wsl.exe -d <distro> <node> <runner> --config <base64-json>` (runner path translated to `/mnt/<drive>/...`)
+
+A dead runner is respawned on the next message (`ensureRunner`) so nothing is dropped.
+
+**Persistence.** Each session is flushed to `session.json` + `conversation.md` whenever `s.dirty` is set. The flush runs on a scheduler tick so writes are batched.
+
+**Scheduler.** Runs every second. When a session status is `limited` and `nextContinueAt` has passed, sends `continue` to the runner. A `minIntervalSeconds` guard prevents double-fires. Account-level reset (`max(all session resetAt)`) drives the "continue all" path.
+
+**Usage fetcher.** A throwaway SDK session (`src/usage-fetcher.mjs`) that calls the experimental `/usage` endpoint without taking a model turn. Runs at startup and every `usage.pollSeconds` seconds (default 60). The orchestrator caches the result and surfaces it in the fleet snapshot.
+
+**History.** Walks `sessions.dir` and reads `session.json` from every saved session folder. Builds a flat list sorted newest-first. Used by the History panel and `/api/usage/history`.
+
+**Usage history endpoints:**
+- `/api/usage/history` — aggregates cost + tokens from `session.json` files (has cost data from SDK) and raw JSONL files. Returns `{ sessions[], byDay{}, byMonth{}, byModel{}, totals{} }`. Cached 30 s.
+- `/api/usage/exchanges` — reads ALL assistant events from every JSONL in `~/.claude/projects/`. Returns per-exchange scatter data and `{ byDay{}, byWeek{}, byMonth{}, byModel{} }`. Cached 120 s. Deduplicates by `ev.uuid` to handle streaming re-sends.
+
+---
+
+## Browser UI — `public/app.js`
+
+Plain fetch + `EventSource` + DOM. No framework, no build step. Runs on iPad Safari with nothing installed.
+
+**State sync.** Polls `/api/state` every second and subscribes to `/api/events` SSE for push. Both return the same `fleetSnapshot()` shape. A memoized sig prevents re-rendering unchanged panels.
+
+**Rendering.** All panels render from the latest snapshot. The chat re-renders only changed messages (via a `lastRendered` offset). Tool calls are collapsed to one line; the assistant's markdown is rendered with a custom parser (no dependency).
+
+**Usage overlay.** Full-screen panel opened by the **📊 Usage** header button. Fetches `/api/usage/history` for the Overview/Daily/Monthly/Models/Sessions tabs. Fetches `/api/usage/exchanges` (once per overlay open, cached in JS) for the Scatter tab. Uses [Chart.js 4](https://www.chartjs.org/) loaded from CDN.
+
+---
+
+## Session folder layout
+
+```
+<sessions.dir>/
+  <Windows|WSL>/<distro-or-hostname>/<repo>/<label>/
+    session.json      canonical record (id, model, mode, interactions, lastResult, ...)
+    conversation.md   human-readable markdown transcript
+    instructions/     .md files the agent reads and follows
+```
+
+`lastResult` in `session.json` carries `{ cost, usage: { input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens }, turns }` from the SDK's final result event.
+
+---
+
+## Token optimization design
+
+The orchestrator applies token-saving defaults for **unattended sessions** (policy `auto`) at `createSession()`:
+- `thinking` defaults to `off` (configurable via `unattended.thinking`)
+- `partialMessages` defaults to `false` (configurable via `unattended.partialMessages`)
+- `model` defaults to `unattended.model` if set (cheaper model for background work)
+- `maxTurns` from `unattended.maxTurns` (default 0 = unlimited)
+
+Interactive sessions keep `adaptive` thinking and full streaming regardless of these settings. All values are overridable per-session.
+
+The tool server's MCP adapter ([`tool-server/mcp-adapter/src/index.ts`](../tool-server/mcp-adapter/src/index.ts)) only registers the curated default tools by default (controlled by `TOOL_SERVER_TOOLS` env). The per-session tool selection is enforced in the runner's `canUseTool` callback.
+
+---
+
+## Why this shape (design rationale)
+
+**Why own sessions instead of automating an editor:** the Claude Code chat panel has no public input API. A VS Code extension can only poke a webview via CDP — fragile and unofficial. Owning sessions via the Agent SDK gives first-class interactivity (push user messages, resolve tool approvals, interrupt, resume) through supported APIs.
+
+**Why Node / web (not Electron):** the goal is "monitor from my iPad or laptop". A host-resident HTTP server reachable from any browser on the LAN is simpler, cheaper, and more portable than an Electron app. It also lets unattended sessions run on the host while the user is away.
+
+**Why zero-build UI:** the UI is served as plain ESM. No bundler, no build step, no `node_modules` in `public/`. A change to `app.js` is immediately visible on the next browser reload — important for rapid iteration on a tool you're also using.
+
 
 ## Why this shape
 
