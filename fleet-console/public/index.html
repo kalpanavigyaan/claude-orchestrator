@@ -13,6 +13,9 @@
       <h1>Fleet Console</h1>
       <span id="conn" class="conn offline">offline</span>
     </div>
+    <nav class="hdr-nav">
+      <button id="btn-usage-tab" class="hdr-nav-btn" title="Usage statistics">📊 Usage</button>
+    </nav>
     <div class="account">
       <span class="label">Account reset</span>
       <span id="account-countdown" class="countdown">—</span>
@@ -117,7 +120,8 @@
       </label>
       <label>Extended thinking
         <select id="f-thinking">
-          <option value="adaptive">Adaptive (default)</option>
+          <option value="">Auto — off when unattended, adaptive otherwise</option>
+          <option value="adaptive">Adaptive (always on)</option>
           <option value="off">Off</option>
         </select>
       </label>
@@ -173,6 +177,104 @@
     </div>
   </div>
 
+  <!-- Usage statistics overlay -->
+  <div id="usage-overlay" class="usage-overlay hidden">
+    <div class="uso-header">
+      <h2>Usage Statistics</h2>
+      <div class="uso-tabs">
+        <button class="uso-tab active" data-utab="overview">Overview</button>
+        <button class="uso-tab" data-utab="daily">Daily</button>
+        <button class="uso-tab" data-utab="monthly">Monthly</button>
+        <button class="uso-tab" data-utab="models">Models</button>
+        <button class="uso-tab" data-utab="sessions">Sessions</button>
+        <button class="uso-tab" data-utab="scatter">Scatter</button>
+      </div>
+      <button id="uso-back" class="uso-back" title="Back to Fleet Console">← Back</button>
+      <button id="uso-close" class="uso-close" title="Close">×</button>
+    </div>
+    <div class="uso-body">
+      <!-- Overview pane -->
+      <div id="uso-pane-overview" class="uso-pane">
+        <div class="uso-kpis" id="uso-kpis"></div>
+        <div class="uso-charts-row">
+          <div class="uso-chart-card uso-chart-wide">
+            <div class="uso-chart-title">Daily cost (last 60 days, USD)</div>
+            <canvas id="chart-daily-cost"></canvas>
+          </div>
+          <div class="uso-chart-card">
+            <div class="uso-chart-title">Tokens by type (last 60 days)</div>
+            <canvas id="chart-token-types"></canvas>
+          </div>
+        </div>
+        <div class="uso-charts-row">
+          <div class="uso-chart-card">
+            <div class="uso-chart-title">Cost by model</div>
+            <canvas id="chart-model-cost"></canvas>
+          </div>
+          <div class="uso-chart-card">
+            <div class="uso-chart-title">Cache hit rate by day</div>
+            <canvas id="chart-cache-rate"></canvas>
+          </div>
+        </div>
+      </div>
+      <!-- Daily pane -->
+      <div id="uso-pane-daily" class="uso-pane hidden">
+        <div class="uso-chart-card uso-chart-tall">
+          <div class="uso-chart-title">Input vs Output tokens per day</div>
+          <canvas id="chart-daily-tokens"></canvas>
+        </div>
+        <div id="uso-daily-table" class="uso-table-wrap"></div>
+      </div>
+      <!-- Monthly pane -->
+      <div id="uso-pane-monthly" class="uso-pane hidden">
+        <div class="uso-charts-row">
+          <div class="uso-chart-card uso-chart-wide">
+            <div class="uso-chart-title">Monthly cost (USD)</div>
+            <canvas id="chart-monthly-cost"></canvas>
+          </div>
+          <div class="uso-chart-card">
+            <div class="uso-chart-title">Monthly token volume</div>
+            <canvas id="chart-monthly-tokens"></canvas>
+          </div>
+        </div>
+        <div id="uso-monthly-table" class="uso-table-wrap"></div>
+      </div>
+      <!-- Models pane -->
+      <div id="uso-pane-models" class="uso-pane hidden">
+        <div class="uso-charts-row">
+          <div class="uso-chart-card">
+            <div class="uso-chart-title">Sessions by model</div>
+            <canvas id="chart-model-sessions"></canvas>
+          </div>
+          <div class="uso-chart-card">
+            <div class="uso-chart-title">Tokens by model</div>
+            <canvas id="chart-model-tokens"></canvas>
+          </div>
+        </div>
+        <div id="uso-models-table" class="uso-table-wrap"></div>
+      </div>
+      <!-- Sessions pane -->
+      <div id="uso-pane-sessions" class="uso-pane hidden">
+        <div id="uso-sessions-table" class="uso-table-wrap"></div>
+      </div>
+      <!-- Scatter pane — per-exchange scatter subplots from all Claude JSONL files -->
+      <div id="uso-pane-scatter" class="uso-pane hidden">
+        <div class="uso-scatter-note" id="uso-scatter-note">Loading exchange data from ~/.claude/projects/…</div>
+        <div class="uso-scatter-grid" id="uso-scatter-grid">
+          <div class="uso-chart-card"><div class="uso-chart-title">Daily · Input tokens</div><canvas id="sc-daily-inp"></canvas></div>
+          <div class="uso-chart-card"><div class="uso-chart-title">Daily · Output tokens</div><canvas id="sc-daily-out"></canvas></div>
+          <div class="uso-chart-card"><div class="uso-chart-title">Daily · Cache reads</div><canvas id="sc-daily-cr"></canvas></div>
+          <div class="uso-chart-card"><div class="uso-chart-title">Daily · Cache hit rate %</div><canvas id="sc-daily-hitrate"></canvas></div>
+          <div class="uso-chart-card"><div class="uso-chart-title">Weekly · Total tokens</div><canvas id="sc-weekly-total"></canvas></div>
+          <div class="uso-chart-card"><div class="uso-chart-title">Monthly · Total tokens</div><canvas id="sc-monthly-total"></canvas></div>
+        </div>
+        <div id="uso-scatter-model-table" class="uso-table-wrap" style="margin-top:16px"></div>
+      </div>
+    </div>
+    <div class="uso-footer" id="uso-footer">Loading…</div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

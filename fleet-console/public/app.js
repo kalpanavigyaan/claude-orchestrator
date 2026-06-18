@@ -1652,6 +1652,13 @@ const INTELLIGENCE_TOOLS = [
 
 const TOOL_GROUPS = ["Token", "Logs", "Memory", "AST", "Graph", "Embed"];
 
+// Curated default selection for new sessions — mirrors the backend DEFAULT_INTEL_TOOLS and the MCP
+// adapter's DEFAULT_TOOLS. High-leverage, zero-setup tools that need no embeddings service.
+const DEFAULT_INTEL_TOOLS = [
+  "safr", "chunkhound", "region_extract", "symbol_scope",
+  "tds", "noise_filter", "log_dedup", "stack_collapse",
+];
+
 let lastIntelSig = null;
 
 function renderIntelligence() {
@@ -1659,8 +1666,18 @@ function renderIntelligence() {
   const s = latest && selectedId ? latest.sessions.find((x) => x.id === selectedId) : null;
   const tsEnabled = !!(latest && latest.toolServer && latest.toolServer.enabled);
   const sessionOn = !!(s && s.toolServer);
-  // Use a stable sig so checkboxes don't reset on every fleet poll tick
-  const sig = [tsEnabled ? 1 : 0, sessionOn ? 1 : 0, s ? s.id : "none", s ? s.status : ""].join("|");
+  // Per-session tool selection (defaults to the curated set when the backend hasn't sent one yet).
+  const selected = new Set(
+    s && Array.isArray(s.tools) ? s.tools : DEFAULT_INTEL_TOOLS,
+  );
+  // Use a stable sig so checkboxes don't reset on every fleet poll tick.
+  const sig = [
+    tsEnabled ? 1 : 0,
+    sessionOn ? 1 : 0,
+    s ? s.id : "none",
+    s ? s.status : "",
+    [...selected].sort().join(","),
+  ].join("|");
   if (sig === lastIntelSig) return;
   lastIntelSig = sig;
 
@@ -1675,23 +1692,33 @@ function renderIntelligence() {
 
   const masterChecked = sessionOn ? "checked" : "";
   const masterDisabled = s ? "" : "disabled";
+  // Individual tool checkboxes are usable only when the tool server is enabled for this session.
+  const toolDisabled = s && sessionOn ? "" : "disabled";
+  const selCount = [...selected].filter((id) => INTELLIGENCE_TOOLS.some((t) => t.id === id)).length;
   let html =
     `<div class="intel-master rb-section">
        <label class="rb-check">
          <input type="checkbox" id="intel-master" ${masterChecked} ${masterDisabled}/>
-         <strong>Enable all tools for this session</strong>
+         <strong>Enable tool server for this session</strong>
        </label>
-       <div class="rb-note">Attaches the tool server MCP to the active session so Claude can call all 26 tools directly.</div>
+       <div class="rb-note">Attaches the tool-server MCP so Claude can call the <em>selected</em> tools below
+         (${selCount}/${INTELLIGENCE_TOOLS.length}). Deselected tools are blocked even in auto mode.</div>
+       <div class="intel-quick">
+         <button type="button" class="intel-quick-btn" data-pick="defaults" ${toolDisabled}>Defaults</button>
+         <button type="button" class="intel-quick-btn" data-pick="all" ${toolDisabled}>All</button>
+         <button type="button" class="intel-quick-btn" data-pick="none" ${toolDisabled}>None</button>
+       </div>
      </div>`;
 
   for (const group of TOOL_GROUPS) {
     const tools = INTELLIGENCE_TOOLS.filter((t) => t.group === group);
     html += `<div class="intel-group rb-section"><div class="intel-group-title rb-label">${group}</div>`;
     for (const tool of tools) {
+      const isDefault = DEFAULT_INTEL_TOOLS.includes(tool.id);
       html +=
         `<label class="rb-check intel-tool" title="${escapeHtml(tool.desc)}">
-           <input type="checkbox" class="intel-tool-cb" data-tool="${escapeHtml(tool.id)}" ${sessionOn ? "checked" : ""} ${masterDisabled}/>
-           <span class="intel-tool-label">${escapeHtml(tool.label)}</span>
+           <input type="checkbox" class="intel-tool-cb" data-tool="${escapeHtml(tool.id)}" ${selected.has(tool.id) ? "checked" : ""} ${toolDisabled}/>
+           <span class="intel-tool-label">${escapeHtml(tool.label)}${isDefault ? ' <span class="intel-default-tag">default</span>' : ""}</span>
            <span class="intel-tool-desc">${escapeHtml(tool.desc)}</span>
          </label>`;
     }
@@ -1700,26 +1727,48 @@ function renderIntelligence() {
 
   rbIntelligenceEl.innerHTML = html;
 
-  // Master toggle — enable/disable the tool server for the session
   const masterEl = document.getElementById("intel-master");
+
+  /** Persist the current per-tool selection to the backend. */
+  const pushTools = async () => {
+    if (!s) return;
+    const tools = [...rbIntelligenceEl.querySelectorAll(".intel-tool-cb:checked")].map((cb) => cb.dataset.tool);
+    await api(`/api/sessions/${s.id}/set-tools`, { tools });
+    lastIntelSig = null; // force a re-render with the new selection
+  };
+
+  // Master toggle — enable/disable the tool server for the session.
   if (masterEl && s) {
     masterEl.addEventListener("change", async (e) => {
       await api(`/api/sessions/${s.id}/set-tool-server`, { enabled: e.target.checked });
-      lastIntelSig = null; // force re-render
+      lastIntelSig = null; // force re-render (also enables/disables the tool checkboxes)
       pollFleet();
     });
   }
 
-  // Individual tool checkboxes — currently they track state locally (visual only) since per-tool
-  // enable/disable requires the tool server to support a tool manifest filter endpoint in a future
-  // release. Checking/unchecking still gives the user a clear map of what's available.
+  // Quick-pick buttons: defaults / all / none.
+  for (const btn of rbIntelligenceEl.querySelectorAll(".intel-quick-btn")) {
+    btn.addEventListener("click", async () => {
+      if (!s || !sessionOn) return;
+      const pick = btn.dataset.pick;
+      let next = [];
+      if (pick === "all") next = INTELLIGENCE_TOOLS.map((t) => t.id);
+      else if (pick === "defaults") next = DEFAULT_INTEL_TOOLS.slice();
+      // "none" → []
+      const sel = new Set(next);
+      for (const cb of rbIntelligenceEl.querySelectorAll(".intel-tool-cb")) {
+        cb.checked = sel.has(cb.dataset.tool);
+      }
+      await pushTools();
+      pollFleet();
+    });
+  }
+
+  // Individual tool checkboxes — persist the selection so Claude can only call checked tools.
   for (const cb of rbIntelligenceEl.querySelectorAll(".intel-tool-cb")) {
-    cb.addEventListener("change", () => {
-      // Sync master checkbox: checked if ALL tools are checked
-      const all = rbIntelligenceEl.querySelectorAll(".intel-tool-cb");
-      const checked = rbIntelligenceEl.querySelectorAll(".intel-tool-cb:checked");
-      if (masterEl) masterEl.indeterminate = checked.length > 0 && checked.length < all.length;
-      if (masterEl) masterEl.checked = checked.length === all.length;
+    cb.addEventListener("change", async () => {
+      await pushTools();
+      pollFleet();
     });
   }
 }
@@ -1872,6 +1921,394 @@ async function loadHistoryItem(rel) {
   }
   html += "</div>";
   detail.innerHTML = html;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Usage statistics overlay — powered by /api/usage/history
+// ─────────────────────────────────────────────────────────────────────────────
+const usageOverlayEl = el("usage-overlay");
+let usageCharts = {}; // name → Chart instance (destroyed/recreated on refresh)
+let usageData = null; // last fetched data
+
+el("btn-usage-tab").addEventListener("click", openUsageOverlay);
+const closeUsageOverlay = () => { usageOverlayEl.classList.add("hidden"); el("btn-usage-tab").classList.remove("active"); };
+el("uso-close").addEventListener("click", closeUsageOverlay);
+el("uso-back").addEventListener("click", closeUsageOverlay);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !usageOverlayEl.classList.contains("hidden")) closeUsageOverlay(); });
+
+for (const t of document.querySelectorAll(".uso-tab")) {
+  t.addEventListener("click", () => {
+    document.querySelectorAll(".uso-tab").forEach((x) => x.classList.remove("active"));
+    document.querySelectorAll(".uso-pane").forEach((x) => x.classList.add("hidden"));
+    t.classList.add("active");
+    el("uso-pane-" + t.dataset.utab).classList.remove("hidden");
+    if (t.dataset.utab === "scatter") {
+      loadScatterTab();
+    } else if (usageData) {
+      renderUsageTab(t.dataset.utab, usageData);
+    }
+  });
+}
+
+async function openUsageOverlay() {
+  usageOverlayEl.classList.remove("hidden");
+  el("btn-usage-tab").classList.add("active");
+  el("uso-footer").textContent = "Loading…";
+  const data = await getJson("/api/usage/history");
+  if (!data) { el("uso-footer").textContent = "Failed to load usage data."; return; }
+  usageData = data;
+  const activeTab = (document.querySelector(".uso-tab.active") || {}).dataset?.utab || "overview";
+  renderUsageTab(activeTab, data);
+  const { totals } = data;
+  el("uso-footer").textContent =
+    `${totals.sessionCount} sessions · ` +
+    `${fmtK(totals.inputTokens + totals.outputTokens + totals.cacheReadTokens)} total tokens · ` +
+    `$${totals.costUsd.toFixed(4)} tracked cost · ` +
+    `Data: ${el("uso-footer").textContent.includes("Loading") ? new Date().toLocaleString() : new Date().toLocaleString()}`;
+  el("uso-footer").textContent =
+    `${totals.sessionCount} sessions · ${fmtK(totals.inputTokens + totals.outputTokens + totals.cacheReadTokens)} tokens · $${totals.costUsd.toFixed(4)} tracked cost · refreshed ${new Date().toLocaleTimeString()}`;
+}
+
+function fmtK(n) {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+  return String(n);
+}
+function fmtCost(n) { return "$" + (n || 0).toFixed(4); }
+function cachePct(b) {
+  const total = (b.inputTokens || 0) + (b.cacheReadTokens || 0);
+  return total > 0 ? ((b.cacheReadTokens / total) * 100).toFixed(1) + "%" : "—";
+}
+
+const CHART_COLORS = [
+  "#6ea8fe","#4ade80","#fbbf24","#f87171","#a78bfa","#67e8f9","#fb923c","#f472b6",
+  "#34d399","#818cf8","#facc15","#38bdf8","#fb7185","#a3e635","#e879f9",
+];
+
+function destroyChart(name) {
+  if (usageCharts[name]) { try { usageCharts[name].destroy(); } catch {} usageCharts[name] = null; }
+}
+
+function mkChart(canvasId, config) {
+  destroyChart(canvasId);
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return null;
+  const chart = new Chart(canvas, config);
+  usageCharts[canvasId] = chart;
+  return chart;
+}
+
+const CHART_DEFAULTS = {
+  color: "#9aa3b2",
+  plugins: { legend: { labels: { color: "#9aa3b2", boxWidth: 12, font: { size: 11 } } }, tooltip: { backgroundColor: "#181b24", borderColor: "#2a2f3d", borderWidth: 1, titleColor: "#e6e8ee", bodyColor: "#9aa3b2" } },
+  scales: {
+    x: { ticks: { color: "#9aa3b2", font: { size: 10 } }, grid: { color: "rgba(42,47,61,.5)" } },
+    y: { ticks: { color: "#9aa3b2", font: { size: 10 } }, grid: { color: "rgba(42,47,61,.5)" } },
+  },
+};
+
+function sortedDays(byDay, limit) {
+  return Object.keys(byDay).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort().slice(-(limit || 9999));
+}
+function sortedMonths(byMonth) {
+  return Object.keys(byMonth).filter((m) => /^\d{4}-\d{2}$/.test(m)).sort();
+}
+
+function renderUsageTab(tab, data) {
+  const { sessions, byDay, byMonth, byModel, totals } = data;
+  if (tab === "overview") renderOverview(data);
+  else if (tab === "daily") renderDaily(data);
+  else if (tab === "monthly") renderMonthly(data);
+  else if (tab === "models") renderModels(data);
+  else if (tab === "sessions") renderSessionsTable(sessions);
+}
+
+function renderOverview({ byDay, byModel, totals }) {
+  // KPI cards
+  const cacheTotal = totals.cacheReadTokens + totals.cacheCreationTokens;
+  const allTokens = totals.inputTokens + totals.outputTokens + cacheTotal;
+  const cacheHitRate = (totals.inputTokens + totals.cacheReadTokens) > 0
+    ? (totals.cacheReadTokens / (totals.inputTokens + totals.cacheReadTokens) * 100).toFixed(1)
+    : 0;
+  el("uso-kpis").innerHTML = [
+    { label: "Total cost (tracked)", value: fmtCost(totals.costUsd), sub: "fleet-console sessions" },
+    { label: "Input tokens", value: fmtK(totals.inputTokens), sub: "prompt tokens sent" },
+    { label: "Output tokens", value: fmtK(totals.outputTokens), sub: "tokens generated" },
+    { label: "Cache reads", value: fmtK(totals.cacheReadTokens), sub: `${cacheHitRate}% cache hit rate` },
+    { label: "Cache writes", value: fmtK(totals.cacheCreationTokens), sub: "new cache entries" },
+    { label: "Sessions", value: String(totals.sessionCount), sub: `${totals.turns || 0} total turns` },
+  ].map((k) => `<div class="uso-kpi"><div class="uso-kpi-label">${escapeHtml(k.label)}</div><div class="uso-kpi-value">${escapeHtml(k.value)}</div><div class="uso-kpi-sub">${escapeHtml(k.sub)}</div></div>`).join("");
+
+  const days60 = sortedDays(byDay, 60);
+  const costs = days60.map((d) => +(byDay[d].costUsd || 0).toFixed(6));
+  const labels60 = days60.map((d) => d.slice(5));
+
+  // Daily cost bar
+  mkChart("chart-daily-cost", {
+    type: "bar",
+    data: { labels: labels60, datasets: [{ label: "Cost USD", data: costs, backgroundColor: "rgba(110,168,254,.6)", borderColor: "#6ea8fe", borderWidth: 1, borderRadius: 3 }] },
+    options: { ...CHART_DEFAULTS, responsive: true, plugins: { ...CHART_DEFAULTS.plugins, legend: { display: false } } },
+  });
+
+  // Token types stacked area
+  mkChart("chart-token-types", {
+    type: "bar",
+    data: {
+      labels: labels60,
+      datasets: [
+        { label: "Input", data: days60.map((d) => byDay[d].inputTokens || 0), backgroundColor: "rgba(110,168,254,.7)" },
+        { label: "Output", data: days60.map((d) => byDay[d].outputTokens || 0), backgroundColor: "rgba(74,222,128,.7)" },
+        { label: "Cache read", data: days60.map((d) => byDay[d].cacheReadTokens || 0), backgroundColor: "rgba(251,191,36,.5)" },
+      ],
+    },
+    options: { ...CHART_DEFAULTS, responsive: true, scales: { ...CHART_DEFAULTS.scales, x: { ...CHART_DEFAULTS.scales.x, stacked: true }, y: { ...CHART_DEFAULTS.scales.y, stacked: true } } },
+  });
+
+  // Model cost pie
+  const mKeys = Object.keys(byModel).sort((a, b) => (byModel[b].costUsd || 0) - (byModel[a].costUsd || 0));
+  mkChart("chart-model-cost", {
+    type: "pie",
+    data: { labels: mKeys.map((m) => m.replace("claude-", "").replace(/-\d{8}$/, "")), datasets: [{ data: mKeys.map((m) => +(byModel[m].costUsd || 0).toFixed(6)), backgroundColor: CHART_COLORS }] },
+    options: { ...CHART_DEFAULTS, responsive: true },
+  });
+
+  // Cache hit rate line
+  const cacheRates = days60.map((d) => {
+    const b = byDay[d]; const denom = (b.inputTokens || 0) + (b.cacheReadTokens || 0);
+    return denom > 0 ? +((b.cacheReadTokens / denom) * 100).toFixed(1) : 0;
+  });
+  mkChart("chart-cache-rate", {
+    type: "line",
+    data: { labels: labels60, datasets: [{ label: "Cache hit %", data: cacheRates, borderColor: "#4ade80", backgroundColor: "rgba(74,222,128,.1)", fill: true, tension: .3, pointRadius: 2 }] },
+    options: { ...CHART_DEFAULTS, responsive: true, scales: { ...CHART_DEFAULTS.scales, y: { ...CHART_DEFAULTS.scales.y, min: 0, max: 100, ticks: { ...CHART_DEFAULTS.scales.y.ticks, callback: (v) => v + "%" } } } },
+  });
+}
+
+function renderDaily({ byDay }) {
+  const days = sortedDays(byDay);
+  const labels = days.map((d) => d.slice(5));
+  mkChart("chart-daily-tokens", {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        { label: "Input", data: days.map((d) => byDay[d].inputTokens || 0), backgroundColor: "rgba(110,168,254,.75)", stack: "t" },
+        { label: "Output", data: days.map((d) => byDay[d].outputTokens || 0), backgroundColor: "rgba(74,222,128,.75)", stack: "t" },
+        { label: "Cache read", data: days.map((d) => byDay[d].cacheReadTokens || 0), backgroundColor: "rgba(251,191,36,.6)", stack: "t" },
+        { label: "Cache write", data: days.map((d) => byDay[d].cacheCreationTokens || 0), backgroundColor: "rgba(248,113,113,.5)", stack: "t" },
+      ],
+    },
+    options: { ...CHART_DEFAULTS, responsive: true, scales: { ...CHART_DEFAULTS.scales, x: { ...CHART_DEFAULTS.scales.x, stacked: true }, y: { ...CHART_DEFAULTS.scales.y, stacked: true } } },
+  });
+
+  // Table
+  const rows = [...days].reverse().map((d) => {
+    const b = byDay[d];
+    return `<tr>
+      <td>${d}</td>
+      <td class="num">${fmtK(b.inputTokens||0)}</td>
+      <td class="num">${fmtK(b.outputTokens||0)}</td>
+      <td class="num">${fmtK(b.cacheReadTokens||0)}</td>
+      <td class="num">${fmtK(b.cacheCreationTokens||0)}</td>
+      <td class="num cache-pct">${cachePct(b)}</td>
+      <td class="num cost">${fmtCost(b.costUsd)}</td>
+      <td class="num">${b.count||0}</td>
+    </tr>`;
+  }).join("");
+  el("uso-daily-table").innerHTML = `<table class="uso-table"><thead><tr><th>Date</th><th class="num">Input</th><th class="num">Output</th><th class="num">Cache read</th><th class="num">Cache write</th><th class="num">Hit%</th><th class="num">Cost</th><th class="num">Sessions</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderMonthly({ byMonth }) {
+  const months = sortedMonths(byMonth);
+  mkChart("chart-monthly-cost", {
+    type: "bar",
+    data: { labels: months, datasets: [{ label: "Cost USD", data: months.map((m) => +(byMonth[m].costUsd||0).toFixed(6)), backgroundColor: CHART_COLORS.slice(0, months.length), borderRadius: 4 }] },
+    options: { ...CHART_DEFAULTS, responsive: true, plugins: { ...CHART_DEFAULTS.plugins, legend: { display: false } } },
+  });
+  mkChart("chart-monthly-tokens", {
+    type: "bar",
+    data: {
+      labels: months,
+      datasets: [
+        { label: "Input", data: months.map((m) => byMonth[m].inputTokens||0), backgroundColor: "rgba(110,168,254,.75)", stack: "t" },
+        { label: "Output", data: months.map((m) => byMonth[m].outputTokens||0), backgroundColor: "rgba(74,222,128,.75)", stack: "t" },
+        { label: "Cache read", data: months.map((m) => byMonth[m].cacheReadTokens||0), backgroundColor: "rgba(251,191,36,.5)", stack: "t" },
+      ],
+    },
+    options: { ...CHART_DEFAULTS, responsive: true, scales: { ...CHART_DEFAULTS.scales, x: { ...CHART_DEFAULTS.scales.x, stacked: true }, y: { ...CHART_DEFAULTS.scales.y, stacked: true } } },
+  });
+  const rows = [...months].reverse().map((m) => {
+    const b = byMonth[m];
+    return `<tr><td>${m}</td><td class="num">${fmtK(b.inputTokens||0)}</td><td class="num">${fmtK(b.outputTokens||0)}</td><td class="num">${fmtK(b.cacheReadTokens||0)}</td><td class="num cache-pct">${cachePct(b)}</td><td class="num cost">${fmtCost(b.costUsd)}</td><td class="num">${b.count||0}</td></tr>`;
+  }).join("");
+  el("uso-monthly-table").innerHTML = `<table class="uso-table"><thead><tr><th>Month</th><th class="num">Input</th><th class="num">Output</th><th class="num">Cache read</th><th class="num">Hit%</th><th class="num">Cost</th><th class="num">Sessions</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderModels({ byModel }) {
+  const mKeys = Object.keys(byModel).sort((a, b) => ((byModel[b].inputTokens||0)+(byModel[b].outputTokens||0)) - ((byModel[a].inputTokens||0)+(byModel[a].outputTokens||0)));
+  mkChart("chart-model-sessions", {
+    type: "doughnut",
+    data: { labels: mKeys.map((m) => m.replace("claude-", "").replace(/-\d{8}$/, "")), datasets: [{ data: mKeys.map((m) => byModel[m].count||0), backgroundColor: CHART_COLORS }] },
+    options: { ...CHART_DEFAULTS, responsive: true },
+  });
+  mkChart("chart-model-tokens", {
+    type: "doughnut",
+    data: { labels: mKeys.map((m) => m.replace("claude-", "").replace(/-\d{8}$/, "")), datasets: [{ data: mKeys.map((m) => (byModel[m].inputTokens||0)+(byModel[m].outputTokens||0)), backgroundColor: CHART_COLORS }] },
+    options: { ...CHART_DEFAULTS, responsive: true },
+  });
+  const rows = mKeys.map((m) => {
+    const b = byModel[m];
+    return `<tr><td><span class="model-chip">${escapeHtml(m)}</span></td><td class="num">${fmtK(b.inputTokens||0)}</td><td class="num">${fmtK(b.outputTokens||0)}</td><td class="num">${fmtK(b.cacheReadTokens||0)}</td><td class="num cache-pct">${cachePct(b)}</td><td class="num cost">${fmtCost(b.costUsd)}</td><td class="num">${b.count||0}</td></tr>`;
+  }).join("");
+  el("uso-models-table").innerHTML = `<table class="uso-table"><thead><tr><th>Model</th><th class="num">Input</th><th class="num">Output</th><th class="num">Cache read</th><th class="num">Hit%</th><th class="num">Cost</th><th class="num">Sessions</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderSessionsTable(sessions) {
+  const top = sessions.slice(0, 250);
+  const rows = top.map((s) => {
+    const totalTok = (s.inputTokens||0)+(s.outputTokens||0)+(s.cacheReadTokens||0);
+    return `<tr>
+      <td title="${escapeHtml(s.label)}">${escapeHtml((s.label||"").slice(0,36))}</td>
+      <td>${s.day||""}</td>
+      <td><span class="model-chip">${escapeHtml((s.model||"?").replace("claude-","").replace(/-\d{8}$/,""))}</span></td>
+      <td class="num">${fmtK(s.inputTokens||0)}</td>
+      <td class="num">${fmtK(s.outputTokens||0)}</td>
+      <td class="num">${fmtK(s.cacheReadTokens||0)}</td>
+      <td class="num cache-pct">${cachePct(s)}</td>
+      <td class="num cost">${fmtCost(s.costUsd)}</td>
+      <td class="num">${s.turns||0}</td>
+      <td>${escapeHtml(s.repo||"")}</td>
+    </tr>`;
+  }).join("");
+  el("uso-sessions-table").innerHTML = `<table class="uso-table"><thead><tr><th>Label</th><th>Date</th><th>Model</th><th class="num">Input</th><th class="num">Output</th><th class="num">Cache read</th><th class="num">Hit%</th><th class="num">Cost</th><th class="num">Turns</th><th>Repo</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scatter tab — per-exchange scatter subplots from all ~/.claude/projects/ JSONL
+// ─────────────────────────────────────────────────────────────────────────────
+let scatterData = null;
+let scatterLoaded = false;
+
+async function loadScatterTab() {
+  if (scatterLoaded && scatterData) { renderScatterTab(scatterData); return; }
+  el("uso-scatter-note").textContent = "Reading all exchanges from ~/.claude/projects/ … (first load may take a moment)";
+  const data = await getJson("/api/usage/exchanges");
+  if (!data) { el("uso-scatter-note").textContent = "Failed to load exchange data."; return; }
+  scatterData = data;
+  scatterLoaded = true;
+  renderScatterTab(data);
+}
+
+function renderScatterTab({ exchanges, byDay, byWeek, byMonth, byModel, totals }) {
+  const days = Object.keys(byDay).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+  const weeks = Object.keys(byWeek).filter((w) => /^\d{4}-W\d{2}$/.test(w)).sort();
+  const months = Object.keys(byMonth).filter((m) => /^\d{4}-\d{2}$/.test(m)).sort();
+
+  // x = ms at noon of the date so scatter points don't cluster at midnight
+  const dayMs = (d) => Date.parse(d + "T12:00:00Z");
+  const weekMs = (w) => {
+    const [y, wn] = w.split("-W").map(Number);
+    const jan4 = new Date(Date.UTC(y, 0, 4));
+    return jan4.getTime() - ((jan4.getUTCDay() || 7) - 1) * 86400000 + (wn - 1) * 7 * 86400000 + 3.5 * 86400000;
+  };
+  const monthMs = (m) => Date.parse(m + "-15T12:00:00Z");
+
+  const xFmt = (ms) => {
+    const d = new Date(ms);
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,"0")}-${String(d.getUTCDate()).padStart(2,"0")}`;
+  };
+
+  const scatterOpts = (xLabel, yLabel, yFmt) => ({
+    responsive: true,
+    animation: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: "#181b24", borderColor: "#2a2f3d", borderWidth: 1,
+        titleColor: "#e6e8ee", bodyColor: "#9aa3b2",
+        callbacks: {
+          title: (items) => items[0] ? xFmt(items[0].parsed.x) : "",
+          label: (item) => `${yLabel}: ${yFmt(item.parsed.y)}`,
+        },
+      },
+    },
+    scales: {
+      x: {
+        type: "linear",
+        ticks: { color: "#9aa3b2", font: { size: 9 }, maxTicksLimit: 8, callback: (v) => xFmt(v) },
+        grid: { color: "rgba(42,47,61,.5)" },
+      },
+      y: {
+        ticks: { color: "#9aa3b2", font: { size: 9 }, callback: yFmt },
+        grid: { color: "rgba(42,47,61,.5)" },
+      },
+    },
+  });
+
+  const mkScatter = (id, pts, color, label, yFmt) => {
+    mkChart(id, {
+      type: "scatter",
+      data: { datasets: [{ label, data: pts, backgroundColor: color, pointRadius: 4, pointHoverRadius: 6 }] },
+      options: scatterOpts(label, label, yFmt || fmtK),
+    });
+  };
+
+  // 1. Daily input tokens
+  mkScatter("sc-daily-inp",
+    days.map((d) => ({ x: dayMs(d), y: byDay[d].inputTokens || 0 })),
+    "rgba(110,168,254,.75)", "Input tokens", fmtK);
+
+  // 2. Daily output tokens
+  mkScatter("sc-daily-out",
+    days.map((d) => ({ x: dayMs(d), y: byDay[d].outputTokens || 0 })),
+    "rgba(74,222,128,.75)", "Output tokens", fmtK);
+
+  // 3. Daily cache reads
+  mkScatter("sc-daily-cr",
+    days.map((d) => ({ x: dayMs(d), y: byDay[d].cacheReadTokens || 0 })),
+    "rgba(251,191,36,.75)", "Cache reads", fmtK);
+
+  // 4. Daily cache hit rate %
+  mkScatter("sc-daily-hitrate",
+    days.map((d) => {
+      const b = byDay[d]; const denom = (b.inputTokens||0)+(b.cacheReadTokens||0);
+      return { x: dayMs(d), y: denom > 0 ? +((b.cacheReadTokens/denom)*100).toFixed(1) : 0 };
+    }),
+    "rgba(167,139,250,.8)", "Hit rate %", (v) => v.toFixed(0) + "%");
+
+  // 5. Weekly total tokens
+  mkScatter("sc-weekly-total",
+    weeks.map((w) => {
+      const b = byWeek[w];
+      return { x: weekMs(w), y: (b.inputTokens||0)+(b.outputTokens||0)+(b.cacheReadTokens||0) };
+    }),
+    "rgba(103,232,249,.8)", "Total tokens", fmtK);
+
+  // 6. Monthly total tokens
+  mkScatter("sc-monthly-total",
+    months.map((m) => {
+      const b = byMonth[m];
+      return { x: monthMs(m), y: (b.inputTokens||0)+(b.outputTokens||0)+(b.cacheReadTokens||0) };
+    }),
+    "rgba(248,113,113,.8)", "Total tokens", fmtK);
+
+  // Summary note
+  const cacheHitPct = (totals.inputTokens + totals.cacheReadTokens) > 0
+    ? ((totals.cacheReadTokens / (totals.inputTokens + totals.cacheReadTokens)) * 100).toFixed(1)
+    : 0;
+  el("uso-scatter-note").textContent =
+    `${totals.exchanges.toLocaleString()} exchanges across ${days.length} days from all ~/.claude/projects/ JSONL files · ` +
+    `${fmtK(totals.inputTokens + totals.outputTokens + totals.cacheReadTokens)} total tokens · ${cacheHitPct}% cache hit rate`;
+
+  // Per-model table
+  const mKeys = Object.keys(byModel).sort((a, b) => ((byModel[b].inputTokens||0)+(byModel[b].outputTokens||0)) - ((byModel[a].inputTokens||0)+(byModel[a].outputTokens||0)));
+  const rows = mKeys.map((m) => {
+    const b = byModel[m];
+    const denom = (b.inputTokens||0)+(b.cacheReadTokens||0);
+    const hitPct = denom > 0 ? ((b.cacheReadTokens/denom)*100).toFixed(1)+"%" : "—";
+    return `<tr><td><span class="model-chip">${escapeHtml(m)}</span></td><td class="num">${fmtK(b.inputTokens||0)}</td><td class="num">${fmtK(b.outputTokens||0)}</td><td class="num">${fmtK(b.cacheReadTokens||0)}</td><td class="num cache-pct">${hitPct}</td><td class="num">${(b.count||0).toLocaleString()}</td></tr>`;
+  }).join("");
+  el("uso-scatter-model-table").innerHTML = `<div class="uso-chart-title" style="margin-bottom:6px">Per-model breakdown (all account JSONL data)</div><table class="uso-table"><thead><tr><th>Model</th><th class="num">Input</th><th class="num">Output</th><th class="num">Cache read</th><th class="num">Hit%</th><th class="num">Exchanges</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 // ---- live connection -------------------------------------------------------

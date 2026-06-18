@@ -41,6 +41,48 @@ h1 { font-size: 17px; margin: 0; }
 .account { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .account .label { color: var(--muted); font-size: 12px; }
 .countdown { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 16px; min-width: 78px; }
+.hdr-nav { display: flex; align-items: center; gap: 6px; }
+.hdr-nav-btn { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 5px 12px; font-size: 13px; cursor: pointer; font-weight: 600; }
+.hdr-nav-btn:hover { border-color: var(--accent); color: var(--accent); }
+.hdr-nav-btn.active { background: rgba(110,168,254,.12); border-color: var(--accent); color: var(--accent); }
+
+/* ── Usage statistics overlay ──────────────────────────────────────────────── */
+.usage-overlay { position: fixed; inset: 0; background: var(--bg); z-index: 200; display: flex; flex-direction: column; overflow: hidden; }
+.usage-overlay.hidden { display: none; }
+.uso-header { display: flex; align-items: center; gap: 14px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; }
+.uso-header h2 { margin: 0; font-size: 16px; white-space: nowrap; }
+.uso-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.uso-tab { background: transparent; border: 1px solid var(--border); color: var(--muted); border-radius: 7px; padding: 4px 12px; font-size: 13px; cursor: pointer; min-height: auto; }
+.uso-tab.active { background: rgba(110,168,254,.12); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.uso-close { margin-left: auto; background: transparent; border: 1px solid var(--border); color: var(--muted); border-radius: 6px; font-size: 18px; line-height: 1; padding: 2px 8px; cursor: pointer; min-height: auto; }
+.uso-close:hover { border-color: var(--red); color: var(--red); }
+.uso-back { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); border-radius: 7px; padding: 5px 14px; font-size: 13px; font-weight: 600; cursor: pointer; min-height: auto; margin-left: auto; }
+.uso-back:hover { border-color: var(--accent); color: var(--accent); }
+.uso-body { flex: 1; overflow-y: auto; padding: 16px; }
+.uso-footer { flex-shrink: 0; padding: 6px 16px; background: var(--panel); border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); }
+.uso-pane { display: flex; flex-direction: column; gap: 16px; }
+.uso-pane.hidden { display: none; }
+.uso-kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.uso-kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.uso-kpi-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+.uso-kpi-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.uso-kpi-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.uso-charts-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+.uso-chart-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+.uso-chart-card.uso-chart-wide { grid-column: 1 / -1; }
+.uso-chart-card.uso-chart-tall canvas { max-height: 400px; }
+.uso-chart-title { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 10px; }
+.uso-table-wrap { overflow-x: auto; }
+.uso-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.uso-table th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+.uso-table td { padding: 7px 10px; border-bottom: 1px solid rgba(42,47,61,.5); vertical-align: middle; }
+.uso-table tr:hover td { background: var(--panel-2); }
+.uso-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.uso-table .cost { color: var(--accent); font-weight: 600; }
+.uso-table .cache-pct { color: var(--green); }
+.uso-table .model-chip { background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; font-size: 11px; white-space: nowrap; }
+.uso-scatter-note { font-size: 12px; color: var(--muted); padding: 4px 0 10px; }
+.uso-scatter-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
 
 button {
   appearance: none; border: 1px solid var(--border); background: var(--panel-2);
@@ -198,6 +240,18 @@ details[open] > .tree-summary::before { transform: rotate(90deg); }
 .cmd-item .cmd-name { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 13px; color: var(--accent); }
 .cmd-item .cmd-arg { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: var(--amber); margin-left: 4px; }
 .cmd-item .cmd-desc { font-size: 11px; color: var(--muted); margin-top: 2px; line-height: 1.35; }
+
+/* Intelligence tab — tool-server per-session tool selection */
+.intel-tool { flex-wrap: wrap; align-items: baseline; }
+.intel-tool input { flex: 0 0 auto; }
+.intel-tool-label { font-weight: 600; }
+.intel-tool-desc { flex: 1 1 100%; margin-left: 23px; font-size: 11px; color: var(--muted); line-height: 1.35; }
+.intel-default-tag { font-size: 9px; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); border: 1px solid var(--accent); border-radius: 6px; padding: 0 4px; margin-left: 4px; vertical-align: middle; font-weight: 600; }
+.intel-quick { display: flex; gap: 6px; margin-top: 4px; }
+.intel-quick-btn { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 10px; font-size: 12px; cursor: pointer; min-height: auto; }
+.intel-quick-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.intel-quick-btn:disabled { opacity: .45; cursor: default; }
+.intel-tool input:disabled { opacity: .5; }
 .cmdbar-foot { padding: 8px 12px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); }
 @media (max-width: 720px) { .cmdbar { width: auto; flex: 0 0 auto; max-height: 40vh; border-left: none; border-top: 1px solid var(--border); } }
 .chat-header { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 13px; }
