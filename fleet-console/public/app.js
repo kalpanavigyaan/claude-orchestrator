@@ -11,7 +11,7 @@
 
 // Must match orchestrator BUILD. If the server reports a different build, this page is running a
 // stale cached app.js — we show a banner so it's never a silent mystery. Bump both on UI changes.
-const APP_BUILD = "2026-06-16e";
+const APP_BUILD = "2026-06-17a";
 
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
 const tokenQuery = TOKEN ? `?token=${encodeURIComponent(TOKEN)}` : "";
@@ -722,7 +722,7 @@ function renderControls(s) {
   const models = (latest && latest.models) || [];
   // Stable signature so the inputs don't reset on every poll; covers all three states.
   const sig = s
-    ? "live|" + [s.id, s.status, s.mode, s.model, models.length, s.effort || "", s.thinking || "", s.browser ? 1 : 0, s.autoContinue === false ? 0 : 1].join("|")
+    ? "live|" + [s.id, s.status, s.mode, s.model, models.length, s.effort || "", s.thinking || "", s.browser ? 1 : 0, s.autoContinue === false ? 0 : 1, (s.additionalDirectories || []).join(",")].join("|")
     : viewingRel
       ? "past|" + viewingRel
       : "none";
@@ -759,6 +759,12 @@ function renderControls(s) {
   for (const m of models) {
     modelOpts += `<option value="${escapeHtml(m.value)}" ${m.value === s.model ? "selected" : ""}>${escapeHtml(m.displayName || m.value)}</option>`;
   }
+  const extraDirsHtml = (s.additionalDirectories || []).map((d, i) =>
+    `<div class="rb-dir-item">
+       <span class="rb-dir-path" title="${escapeHtml(d)}">${escapeHtml(d)}</span>
+       <button class="rb-dir-remove" data-idx="${i}" title="Remove">✕</button>
+     </div>`
+  ).join("");
   rbControlsEl.innerHTML =
     `<div class="rb-section">
        <label class="rb-label">🛡 Mode</label>
@@ -776,6 +782,19 @@ function renderControls(s) {
        <label class="rb-label">♻ Auto-continue</label>
        <label class="rb-check"><input type="checkbox" id="ctl-autocontinue" ${s.autoContinue === false ? "" : "checked"}/> Auto-continue after the 5-hour reset</label>
        <div class="rb-note">When on, this session runs a turn unattended after each usage reset — that spends tokens on its own. Turn off to make it wait for you.</div>
+       <label class="rb-label">📁 Directories</label>
+       <div class="rb-note">The working directory is fixed. Add extra repos Claude can read and edit.</div>
+       <div class="rb-dir-list">
+         <div class="rb-dir-item rb-dir-cwd">
+           <span class="rb-dir-path" title="${escapeHtml(s.cwd)}">${escapeHtml(s.cwd)}</span>
+           <span class="rb-dir-badge">cwd</span>
+         </div>
+         ${extraDirsHtml}
+       </div>
+       <div class="rb-dir-add">
+         <input id="ctl-dir-input" class="rb-dir-input" placeholder="/path/to/repo  or  E:/GitHub/repo" />
+         <button id="ctl-dir-add">Add</button>
+       </div>
      </div>
      <div class="rb-actions">
        <button id="ctl-instr">📄 Instructions</button>
@@ -827,6 +846,31 @@ function renderControls(s) {
     await api(`/api/sessions/${s.id}/stop`);
     pollFleet();
   });
+  // Remove a directory by index
+  for (const btn of rbControlsEl.querySelectorAll(".rb-dir-remove")) {
+    btn.addEventListener("click", async () => {
+      const idx = parseInt(btn.dataset.idx, 10);
+      const dirs = (s.additionalDirectories || []).slice();
+      dirs.splice(idx, 1);
+      await api(`/api/sessions/${s.id}/set-directories`, { directories: dirs });
+      lastControlsSig = null;
+      pollFleet();
+    });
+  }
+  // Add a directory
+  const dirAddBtn = el("ctl-dir-add");
+  const dirInput = el("ctl-dir-input");
+  async function addDirectory() {
+    const newDir = dirInput.value.trim();
+    if (!newDir) return;
+    const dirs = [...(s.additionalDirectories || []), newDir];
+    await api(`/api/sessions/${s.id}/set-directories`, { directories: dirs });
+    dirInput.value = "";
+    lastControlsSig = null;
+    pollFleet();
+  }
+  dirAddBtn.addEventListener("click", addDirectory);
+  dirInput.addEventListener("keydown", (e) => { if (e.key === "Enter") addDirectory(); });
 }
 
 // ---- instructions modal ----------------------------------------------------
@@ -1347,11 +1391,14 @@ async function renderRepos() {
   renderReposFallback(listEl, groups);
 }
 el("f-create").addEventListener("click", async () => {
+  const extraDirsRaw = el("f-extra-dirs") ? el("f-extra-dirs").value : "";
+  const additionalDirectories = extraDirsRaw.split(/\n/).map((s) => s.trim()).filter(Boolean);
   const spec = {
     label: el("f-label").value.trim(),
     host: el("f-host").value,
     distro: el("f-distro").value.trim(),
     cwd: el("f-cwd").value.trim(),
+    additionalDirectories,
     model: el("f-model").value.trim(),
     mode: el("f-mode").value,
     effort: el("f-effort").value,
