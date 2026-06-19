@@ -58,6 +58,9 @@
     </div>
     <div class="ab-bottom">
       <div class="ab-countdown" id="account-countdown" title="Account reset countdown">—</div>
+      <button class="ab-action-btn" id="btn-settings" title="Settings (settings.json)">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 5.5a2.5 2.5 0 100 5 2.5 2.5 0 000-5zm0 1.2a1.3 1.3 0 110 2.6 1.3 1.3 0 010-2.6z"/><path d="M6.9 1.4a.5.5 0 01.5-.4h1.2a.5.5 0 01.5.4l.2 1.3c.3.1.6.3.9.5l1.2-.5a.5.5 0 01.6.2l.6 1a.5.5 0 01-.1.7l-1 .8c0 .2.1.4.1.6s0 .4-.1.6l1 .8a.5.5 0 01.1.7l-.6 1a.5.5 0 01-.6.2l-1.2-.5c-.3.2-.6.4-.9.5l-.2 1.3a.5.5 0 01-.5.4H7.4a.5.5 0 01-.5-.4l-.2-1.3a3.9 3.9 0 01-.9-.5l-1.2.5a.5.5 0 01-.6-.2l-.6-1a.5.5 0 01.1-.7l1-.8a3.9 3.9 0 010-1.2l-1-.8a.5.5 0 01-.1-.7l.6-1a.5.5 0 01.6-.2l1.2.5c.3-.2.6-.4.9-.5l.2-1.3z" fill="none" stroke="currentColor" stroke-width="1"/></svg>
+      </button>
     </div>
   </nav>
 
@@ -128,10 +131,10 @@
   <!-- ─── RIGHT SIDEBAR (5 panels) ────────────────────────── -->
   <div class="right-sidebar" id="right-sidebar">
 
-    <!-- Usage panel with 6 tabs -->
+    <!-- Usage panel with 6 tabs — vertical strip left, content right -->
     <div class="rp-panel active" id="rpanel-usage">
-      <div class="rp-header rp-header-tabs">
-        <div class="rp-tabs" id="usage-tabs">
+      <div class="rp-usage-layout">
+        <div class="rp-tab-strip" id="usage-tabs">
           <button class="rp-tab active" data-utab="overview">Overview</button>
           <button class="rp-tab" data-utab="daily">Daily</button>
           <button class="rp-tab" data-utab="monthly">Monthly</button>
@@ -139,18 +142,8 @@
           <button class="rp-tab" data-utab="sessions-hist">Sessions</button>
           <button class="rp-tab" data-utab="scatter">Scatter</button>
         </div>
+        <div class="rp-tab-content" id="rpanel-usage-body"><div class="rp-hint">Loading…</div></div>
       </div>
-      <div class="rp-body" id="rpanel-usage-body"><div class="rp-hint">Loading…</div></div>
-    </div>
-
-    <!-- WSL Distros panel -->
-    <div class="rp-panel" id="rpanel-wsl">
-      <div class="rp-header">
-        <svg viewBox="0 0 16 16" fill="currentColor" style="width:13px;height:13px;flex-shrink:0"><rect x="1" y="2" width="14" height="10" rx="1" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M3.5 6l2.5 2-2.5 2M8.5 10h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none"/></svg>
-        WSL Distros
-        <button class="panel-title-btn" id="btn-refresh-wsl" title="Refresh" style="margin-left:auto">↻</button>
-      </div>
-      <div class="rp-body" id="wsl-list"></div>
     </div>
 
     <!-- Intelligence panel -->
@@ -181,6 +174,34 @@
       <div class="rp-body tree-view repos-tree" id="repos-tree"></div>
     </div>
 
+    <!-- Directories panel -->
+    <div class="rp-panel" id="rpanel-directories">
+      <div class="rp-header">
+        <svg viewBox="0 0 16 16" fill="currentColor" style="width:13px;height:13px;flex-shrink:0"><path d="M1.5 3a1 1 0 011-1h3.6l1.2 1.5h5.2a1 1 0 011 1V12a1 1 0 01-1 1h-11a1 1 0 01-1-1V3z"/></svg>
+        Directories
+      </div>
+      <div class="rp-body" id="dir-panel-body">
+        <div class="rp-hint">Select a session to manage its directories.</div>
+      </div>
+    </div>
+
+    <!-- VMs panel -->
+    <div class="rp-panel" id="rpanel-vms">
+      <div class="rp-header">
+        <svg viewBox="0 0 16 16" fill="currentColor" style="width:13px;height:13px;flex-shrink:0">
+          <rect x="1" y="1" width="14" height="9" rx="1" stroke="currentColor" stroke-width="1.2" fill="none"/>
+          <path d="M4 10v3M12 10v3M3 13h10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          <rect x="3" y="3" width="4" height="3" rx=".5" stroke="currentColor" stroke-width="1" fill="none"/>
+          <rect x="9" y="3" width="4" height="3" rx=".5" stroke="currentColor" stroke-width="1" fill="none"/>
+        </svg>
+        Virtual Machines
+        <button class="panel-title-btn" id="btn-refresh-vms" title="Refresh" style="margin-left:auto">↻</button>
+      </div>
+      <div class="rp-body" id="vms-list">
+        <div class="ctrl-hint">Scanning for VMs…</div>
+      </div>
+    </div>
+
   </div><!-- right-sidebar -->
 
   <!-- ─── RIGHT ACTIVITY BAR ───────────────────────────────── -->
@@ -188,8 +209,13 @@
     <button class="rab-icon active" data-rpanel="usage" title="Usage Statistics">
       <svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 12L5 7l3 3 5-6" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
-    <button class="rab-icon" data-rpanel="wsl" title="WSL Distros">
-      <svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="10" rx="1" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M3.5 6l2.5 2-2.5 2M8.5 10h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none"/></svg>
+    <button class="rab-icon" data-rpanel="vms" title="Virtual Machines (WSL, Hyper-V, VMware, VirtualBox)">
+      <svg viewBox="0 0 16 16" fill="currentColor">
+        <rect x="1" y="1" width="14" height="9" rx="1" stroke="currentColor" stroke-width="1.2" fill="none"/>
+        <path d="M4 10v3M12 10v3M3 13h10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        <rect x="3" y="3" width="4" height="3" rx=".5" stroke="currentColor" stroke-width="1" fill="none"/>
+        <rect x="9" y="3" width="4" height="3" rx=".5" stroke="currentColor" stroke-width="1" fill="none"/>
+      </svg>
     </button>
     <button class="rab-icon" data-rpanel="intelligence" title="Intelligence / Tool Server">
       <svg viewBox="0 0 16 16" fill="currentColor"><path d="M6 2a4 4 0 014 4v.5h1.5a2.5 2.5 0 010 5h-7A2.5 2.5 0 012 9a2.5 2.5 0 012-2.45V6a4 4 0 014-4zm0 1.2A2.8 2.8 0 003.2 6v.88l-.58.16A1.3 1.3 0 004.5 10.5h7a1.3 1.3 0 000-2.6H9.2V6A2.8 2.8 0 006 3.2z"/></svg>
@@ -199,6 +225,9 @@
     </button>
     <button class="rab-icon" data-rpanel="repos" title="Repositories">
       <svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.5a.5.5 0 01.5-.5h3a.5.5 0 010 1H3v9h10V8.5a.5.5 0 011 0V13a.5.5 0 01-.5.5H2.5A.5.5 0 012 13V2.5zM8 2h5.5a.5.5 0 01.5.5V8a.5.5 0 01-1 0V3.7L8.35 8.35a.5.5 0 01-.7-.7L12.3 3H8a.5.5 0 010-1z"/></svg>
+    </button>
+    <button class="rab-icon" data-rpanel="directories" title="Directories &amp; working dir (read-only / write per folder)">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3a1 1 0 011-1h3.6l1.2 1.5h5.2a1 1 0 011 1V12a1 1 0 01-1 1h-11a1 1 0 01-1-1V3z"/></svg>
     </button>
   </nav>
 
@@ -217,18 +246,71 @@
      NEW SESSION MODAL
 ════════════════════════════════════════════════════════════ -->
 <div id="new-modal" class="modal-overlay hidden">
-  <div class="modal" style="width:580px">
+  <div class="modal" style="width:600px">
     <h2>New Session</h2>
     <label>Label <input id="f-label" placeholder="my-task" /></label>
     <label>Host
       <select id="f-host">
         <option value="local">local (Windows host)</option>
         <option value="wsl">wsl (distro)</option>
+        <option value="hyperv">Hyper-V VM</option>
       </select>
     </label>
     <label id="f-distro-row" class="hidden">WSL distro <select id="f-distro"></select></label>
+
+    <!-- Hyper-V: VM picker + credentials + manual entry fallback -->
+    <div id="f-hyperv-row" style="display:none;flex-direction:column;gap:8px">
+      <label style="margin:0">Hyper-V VM
+        <div style="display:flex;gap:6px;align-items:center">
+          <select id="f-hyperv-vm" style="flex:1"></select>
+          <button type="button" class="btn-secondary" id="btn-refresh-hv-vms"
+            style="padding:4px 9px;font-size:12px;white-space:nowrap" title="Rescan VMs">↻</button>
+        </div>
+      </label>
+      <details id="f-hyperv-creds-row">
+        <summary style="font-size:12px;color:var(--vsc-muted);cursor:pointer;user-select:none;margin-bottom:6px">
+          VM credentials (needed if current user can't access the VM directly)
+        </summary>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <label style="margin:0;font-size:12px;color:var(--vsc-muted)">Username
+            <input id="f-hv-user" placeholder="DOMAIN\Administrator  or  .\localuser" autocomplete="off" />
+          </label>
+          <label style="margin:0;font-size:12px;color:var(--vsc-muted)">Password
+            <input id="f-hv-pass" type="password" placeholder="(leave blank to use current user)" autocomplete="off" />
+          </label>
+          <div style="font-size:10px;color:var(--vsc-muted)">
+            Credentials are kept in memory only and never written to disk.
+          </div>
+        </div>
+      </details>
+      <div id="f-hyperv-error" style="display:none;font-size:11px;color:#f87171;padding:4px 6px;background:rgba(248,81,73,.08);border-radius:4px"></div>
+    </div>
+
     <label id="f-repos-row" class="hidden">Repository <select id="f-repos"></select></label>
-    <label>Working directory <input id="f-cwd" placeholder="E:/GitHub/app  or  /home/user/app" /></label>
+
+    <!-- Working directory with inline VM folder browser -->
+    <label>Working directory
+      <div style="display:flex;gap:6px">
+        <input id="f-cwd" placeholder="E:/GitHub/app  or  /home/user/app" style="flex:1" />
+        <button type="button" class="btn-secondary" id="btn-browse-cwd" style="white-space:nowrap;padding:4px 10px;font-size:12px">Browse VM…</button>
+      </div>
+    </label>
+
+    <!-- VM folder browser (hidden until Browse is clicked) -->
+    <div id="vm-browser" class="vm-browser hidden">
+      <div class="vm-browser-bar">
+        <button type="button" class="vm-browser-up" id="vm-browser-up" title="Up one level">↑</button>
+        <span class="vm-browser-path" id="vm-browser-path">/</span>
+        <span class="vm-browser-target" id="vm-browser-target"></span>
+      </div>
+      <div class="vm-browser-list" id="vm-browser-list"></div>
+      <div class="vm-browser-actions">
+        <button type="button" class="btn-secondary" id="vm-browser-cancel">Cancel</button>
+        <button type="button" class="btn-primary"   id="vm-browser-select">Use this folder</button>
+        <button type="button" class="btn-secondary" id="vm-browser-add-repo">Add as extra repo</button>
+      </div>
+    </div>
+
     <label>Extra repos / directories
       <textarea id="f-extra-dirs" rows="3" placeholder="One path per line — extra repos Claude can read and edit"></textarea>
     </label>
@@ -329,6 +411,26 @@
     <div class="modal-actions">
       <button id="reset-cancel" class="btn-secondary">Cancel</button>
       <button id="reset-save" class="btn-primary">Set Reset</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     SETTINGS MODAL  (raw settings.json editor)
+════════════════════════════════════════════════════════════ -->
+<div id="settings-modal" class="modal-overlay hidden">
+  <div class="modal" style="width:720px">
+    <h2>Settings</h2>
+    <div class="settings-hint">
+      Edit <code>settings.json</code> directly — theme colours, chat formatting,
+      <code>vm.repoRoots</code> (scanned inside Hyper-V VMs for repos), and
+      <code>sessions.dir</code>. Comments are preserved. Invalid JSON won't be saved.
+    </div>
+    <textarea id="settings-editor" class="settings-editor" spellcheck="false"></textarea>
+    <div id="settings-status" class="settings-status" style="display:none"></div>
+    <div class="modal-actions">
+      <button id="settings-cancel" class="btn-secondary">Cancel</button>
+      <button id="settings-save" class="btn-primary">Save</button>
     </div>
   </div>
 </div>

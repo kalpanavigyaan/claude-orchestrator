@@ -1,0 +1,83 @@
+{
+  // Fleet Console – User Settings
+  // Format mirrors VS Code settings.json. Restart the app to apply.
+
+  // ── Window ────────────────────────────────────────────────
+  "window.width": 1440,
+  "window.height": 920,
+  "window.minWidth": 900,
+  "window.minHeight": 600,
+  "window.rememberSize": true,
+
+  // ── Left sidebar ──────────────────────────────────────────
+  "sidebar.width": 260,
+  "sidebar.sessions.height": 180,
+  "sidebar.controls.height": 230,
+
+  // ── Right sidebar ─────────────────────────────────────────
+  "sidebar.right.width": 300,
+  "sidebar.right.defaultPanel": "usage",
+  "sidebar.right.usage.defaultTab": "overview",
+
+  // ── Session defaults ──────────────────────────────────────
+  "session.defaultHost": "local",
+  "session.defaultMode": "bypassPermissions",
+  "session.defaultEffort": "",
+  "session.defaultThinking": "adaptive",
+  "session.autoContinue": true,
+  "session.autoLoadHistory": true,
+
+  // ── Chat / editor ─────────────────────────────────────────
+  "chat.fontSize": 13,
+  "chat.lineHeight": 1.6,
+  "chat.fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+  "chat.codeFontFamily": "'Cascadia Code', 'Fira Mono', Consolas, monospace",
+
+  // ── Orchestrator ──────────────────────────────────────────
+  "orchestrator.port": 4318,
+  "orchestrator.token": "",
+
+  // ── Session storage ───────────────────────────────────────
+  // Where per-session folders (json + markdown + instructions) live. Passed to
+  // the orchestrator as SESSIONS_DIR on launch. Blank = use the orchestrator's
+  // own config.yaml value. Takes effect on app restart.
+  "sessions.dir": "E:/Sessions/Claude",
+
+  // ── VM repository discovery ───────────────────────────────
+  // When you pick a Hyper-V VM in the New Session dialog, these roots are
+  // scanned INSIDE the guest for git repositories. The guest OS is detected
+  // automatically and the matching list is used. Windows paths accept the
+  // "*" wildcard (expanded per matching folder, e.g. each user profile).
+  "vm.repoRoots.windows": [
+    "C:\\Users\\*\\source\\repos",
+    "C:\\Users\\*\\Documents",
+    "C:\\Users\\*\\Projects",
+    "C:\\dev",
+    "C:\\src",
+    "C:\\repos",
+    "C:\\GitHub",
+    "C:\\Projects"
+  ],
+  "vm.repoRoots.linux": [
+    "/root",
+    "/home",
+    "/srv",
+    "/opt"
+  ],
+  "vm.repoScanDepth": 4,
+
+  // ── Theme overrides ───────────────────────────────────────
+  // Any key here is applied as a CSS custom property at startup, overriding the
+  // built-in dark palette. Keys may be given with or without the leading "--".
+  // See styles.css :root for the full list (accent, editorBg, green, red, …).
+  "theme.colors": {
+    // "--vsc-accent": "#007acc",
+    // "--vsc-editor-bg": "#1e1e1e",
+    // "--vsc-statusbar-bg": "#007acc"
+  },
+
+  // ── Status bar ────────────────────────────────────────────
+  "statusBar.showTokens": true,
+  "statusBar.showSessionCost": true,
+  "statusBar.showAccountWindows": true
+}

@@ -55,6 +55,99 @@ const el = (id) => document.getElementById(id);
 function qs(sel, root = document) { return root.querySelector(sel); }
 function qsa(sel, root = document) { return [...root.querySelectorAll(sel)]; }
 
+// ─── Session status helpers ───────────────────────────────────────────────────
+// Track when each session first appeared in "starting" state so we can detect
+// runners that are stuck (never sent a ready event).
+const sessionStartingAt = new Map();
+
+function liveDisplayStatus(s) {
+  const raw = s.status || "idle";
+  if (raw === "starting") {
+    if (!sessionStartingAt.has(s.id)) sessionStartingAt.set(s.id, Date.now());
+    const elapsed = Date.now() - sessionStartingAt.get(s.id);
+    // After 45 s without a ready event the runner is stuck — show as idle
+    return elapsed > 45000 ? "idle" : "starting";
+  }
+  sessionStartingAt.delete(s.id); // clear when status leaves starting
+  return raw;
+}
+
+// For saved (history) sessions: starting/running are legacy artifacts from an
+// interrupted save — map them to a neutral display status.
+function historyDisplayStatus(rawStatus) {
+  if (!rawStatus) return "idle";
+  if (rawStatus === "starting" || rawStatus === "running") return "idle";
+  if (rawStatus === "ended") return "done";
+  return rawStatus;
+}
+
+// ─── Apply settings from settings.json ────────────────────────────────────────
+let lastSettings = null;
+function applySettings(s) {
+  lastSettings = s;
+  const root = document.documentElement.style;
+  // Sidebar widths
+  const lw = s["sidebar.width"];
+  if (lw) { const sb = el("sidebar"); if (sb) sb.style.width = lw + "px"; }
+  const rw = s["sidebar.right.width"];
+  if (rw) { const rs = el("right-sidebar"); if (rs) rs.style.width = rw + "px"; }
+  const sh = s["sidebar.sessions.height"];
+  if (sh) { const p = el("lp-sessions"); if (p) p.style.height = sh + "px"; }
+  const ch = s["sidebar.controls.height"];
+  if (ch) { const p = el("lp-controls"); if (p) p.style.height = ch + "px"; }
+  // Default right panel
+  const dp = s["sidebar.right.defaultPanel"];
+  if (dp && dp !== activeRightPanel) switchRightPanel(dp);
+  // Chat formatting
+  const cf = s["chat.fontSize"];
+  if (cf) root.setProperty("--chat-font-size", cf + "px");
+  const cl = s["chat.lineHeight"];
+  if (cl) root.setProperty("--chat-line-height", String(cl));
+  const ff = s["chat.fontFamily"];
+  if (ff) root.setProperty("--chat-font-family", String(ff));
+  const cff = s["chat.codeFontFamily"];
+  if (cff) root.setProperty("--chat-code-font-family", String(cff));
+  // Theme colour overrides — each key is applied as a CSS custom property.
+  const colors = s["theme.colors"];
+  if (colors && typeof colors === "object") {
+    for (const [key, val] of Object.entries(colors)) {
+      if (!val) continue;
+      root.setProperty(key.startsWith("--") ? key : "--" + key, String(val));
+    }
+  }
+}
+
+// ─── Settings editor (raw settings.json) ──────────────────────────────────────
+async function openSettingsModal() {
+  const ta = el("settings-editor");
+  setSettingsStatus("");
+  if (ta && window.fleetApp?.getSettingsRaw) {
+    try { ta.value = await window.fleetApp.getSettingsRaw(); } catch { ta.value = ""; }
+  }
+  el("settings-modal")?.classList.remove("hidden");
+}
+
+function setSettingsStatus(msg, isError) {
+  const s = el("settings-status");
+  if (!s) return;
+  s.textContent = msg || "";
+  s.style.display = msg ? "" : "none";
+  s.style.color = isError ? "var(--vsc-red)" : "var(--vsc-green)";
+}
+
+async function saveSettingsFromEditor() {
+  const ta = el("settings-editor");
+  if (!ta || !window.fleetApp?.saveSettingsRaw) return;
+  const res = await window.fleetApp.saveSettingsRaw(ta.value);
+  if (res?.ok) {
+    applySettings(res.settings); // colours / fonts apply live
+    setSettingsStatus("Saved. Port & session-storage changes take effect on app restart.", false);
+    setTimeout(() => el("settings-modal")?.classList.add("hidden"), 900);
+  } else {
+    setSettingsStatus("Invalid JSON — not saved: " + (res?.error || "parse error"), true);
+  }
+}
+
 function serverNow() { return Date.now() + clockOffset; }
 
 // ─── Fetch helpers ────────────────────────────────────────────────────────────
@@ -296,10 +389,13 @@ function switchRightPanel(id) {
   qsa(".rab-icon").forEach((b) => b.classList.toggle("active", b.dataset.rpanel === id));
   qsa(".rp-panel").forEach((p) => p.classList.toggle("active", p.id === `rpanel-${id}`));
   if (id === "usage")        loadAndRenderRightPanel();
-  if (id === "wsl")          { if (!wslLoaded) { wslLoaded = true; loadAndRenderWsl(); } else renderWslList(); }
+  // Re-scan every time the VM panel is opened: distro state (running/stopped) goes stale
+  // quickly, so we revalidate on open. Cached data stays on screen meanwhile (no flash).
+  if (id === "vms" || id === "wsl") { wslLoaded = true; loadAndRenderVMs(); }
   if (id === "intelligence") renderIntelligence();
   if (id === "commands")     renderCommands();
   if (id === "repos")        renderReposTree();
+  if (id === "directories")  renderDirectoriesPanel();
 }
 function switchUsageTab(tab) {
   activeUsageTab = tab;
@@ -363,13 +459,9 @@ function renderFleet() {
   }
   // Status bar + right panel
   renderStatusBar();
-  renderRightPanel();
-  // Build tag is part of renderStatusBar now
-  // Always render controls (now a permanent left pane)
+  renderRightPanel(); // handles usage/intelligence/commands based on activeRightPanel
+  // Always render controls (permanent left pane)
   renderControls();
-  // Re-render active right panels
-  if (activeRightPanel === "intelligence") renderIntelligence();
-  if (activeRightPanel === "commands")    renderCommands();
   // Drain approval queue
   drainApprovals();
 }
@@ -482,6 +574,7 @@ function renderRightPanel() {
   if (activeRightPanel === "usage") renderUsageTabContent();
   else if (activeRightPanel === "intelligence") renderIntelligence();
   else if (activeRightPanel === "commands")     renderCommands();
+  else if (activeRightPanel === "directories")  renderDirectoriesPanel();
 }
 
 // ── SVG primitives ──
@@ -548,8 +641,7 @@ function svgScatter(exchanges, { width = 260, height = 100 } = {}) {
 // ── Usage tab renderer ──
 function renderUsageTabContent() {
   const body = el("rpanel-usage-body");
-  if (!body || activeRightPanel !== "usage") return;
-  const tab  = activeUsageTab;
+  if (!body || activeRightPanel !== "usage") return;  const tab  = activeUsageTab;
   const u    = latest?.usage || {};
   const totals = u.totals || {};
   const wins   = sortedWindows(u.windows);
@@ -719,11 +811,13 @@ function renderSessionsList() {
   const sessions = latest.sessions;
   if (!sessions.length) { list.innerHTML = '<div class="ctrl-hint">No active sessions. Click ＋ to create one.</div>'; return; }
   list.innerHTML = sessions.map((s) => {
-    const statusCls = s.status === "running" ? "running" : s.status === "starting" ? "starting" : s.status === "idle" ? "idle" : "done";
+    const displaySt = liveDisplayStatus(s);
+    const dotCls = displaySt === "running" ? "running" : displaySt === "starting" ? "starting" : displaySt === "error" ? "error" : "idle";
+    const statusCls = dotCls; // same class set on the item for selection ring colour
     const repo = s.cwd ? s.cwd.split(/[\\/]/).filter(Boolean).pop() : "";
     return `<div class="session-item${s.id === selectedId ? " selected" : ""}" data-id="${escapeHtml(s.id)}">
       <div class="session-item-top">
-        <span class="session-status-dot ${statusCls}"></span>
+        <span class="session-status-dot ${dotCls}"></span>
         <span class="session-label" title="${escapeHtml(s.label)}">${escapeHtml(s.label)}</span>
       </div>
       <div class="session-meta">
@@ -767,15 +861,46 @@ function updateChatHeader(s) {
 
 function renderWorkingState(s) {
   const w = el("working");
-  if (!s || s.status !== "running") { w.classList.add("hidden"); return; }
+  if (!s || s.status !== "running") {
+    w.classList.add("hidden");
+    const cmd = el("working-cmd"); if (cmd) cmd.innerHTML = "";  // clear stale tool activity
+    return;
+  }
   w.classList.remove("hidden");
   el("working-text").textContent = "Claude is working…";
+}
+
+// One-line summary of a tool/command execution for the activity box above the composer.
+function formatToolHtml(m) {
+  const name = escapeHtml(m.name || "tool");
+  let detail = "";
+  if (m.input && typeof m.input === "object") {
+    const v = m.input.command ?? m.input.cmd ?? m.input.file_path ?? m.input.path ??
+              m.input.pattern ?? m.input.query ?? m.input.url;
+    detail = v != null ? String(v) : JSON.stringify(m.input);
+  } else if (m.input != null) {
+    detail = String(m.input);
+  }
+  detail = detail.replace(/\s+/g, " ").trim().slice(0, 300);
+  return `🔧 <strong>${name}</strong>${detail ? ` <span class="working-cmd-arg">${escapeHtml(detail)}</span>` : ""}`;
+}
+
+// Show the current tool/command in the small box above the chat input instead of the transcript.
+function setToolActivity(m) {
+  const cmd = el("working-cmd");
+  if (!cmd) return;
+  cmd.innerHTML = formatToolHtml(m);
+  // Only surface the box while this session is actually running (a stopped session's backlog
+  // tools shouldn't pop the box open).
+  const s = latest?.sessions?.find((x) => x.id === selectedId);
+  if (s?.status === "running") el("working").classList.remove("hidden");
 }
 
 // ─── Session SSE ──────────────────────────────────────────────────────────────
 function openSessionSSE(id) {
   if (sessionES) { sessionES.close(); sessionES = null; }
   el("messages").innerHTML = "";
+  const cmd = el("working-cmd"); if (cmd) cmd.innerHTML = "";  // drop the previous session's tool activity
   sessionES = new EventSource(`${BASE}/api/sessions/${id}/events${tokenQ}`);
   sessionES.onmessage = (ev) => {
     let data; try { data = JSON.parse(ev.data); } catch { return; }
@@ -814,8 +939,10 @@ function appendMessage(m) {
   } else if (role === "assistant") {
     body = `<div class="msg-body">${mdToHtml(m.text || "")}</div>`;
   } else if (role === "tool") {
-    const input = m.input ? escapeHtml(JSON.stringify(m.input).slice(0, 200)) : "";
-    body = `<div class="msg-tool-use">🔧 <strong>${escapeHtml(m.name || "")}</strong>${input ? ` <span style="opacity:.6">${input}</span>` : ""}</div>`;
+    // Tool/command executions don't belong in the transcript — show them in the small
+    // activity box above the chat input instead.
+    setToolActivity(m);
+    return;
   } else if (role === "result") {
     body = `<div class="msg-body">${mdToHtml(m.text || "")}</div>`;
   } else {
@@ -1168,69 +1295,59 @@ function renderHistoryTree() {
     return;
   }
 
-  // Group by date, then by repo within each date group
+  // Group by date only — session is the primary navigation item, repo is metadata below it
   const DATE_ORDER = ["Today","Yesterday","This Week","Last Week","This Month","Older"];
   const byDate = {};
   for (const s of filtered) {
     const grp = dateGroup(s.createdAt || s.mtime);
-    if (!byDate[grp]) byDate[grp] = {};
-    const repo = s.repo || "unknown";
-    if (!byDate[grp][repo]) byDate[grp][repo] = [];
-    byDate[grp][repo].push(s);
+    if (!byDate[grp]) byDate[grp] = [];
+    byDate[grp].push(s);
   }
 
-  // Use numeric indices instead of CSS.escape for data attributes to avoid selector edge cases
   let gIdx = 0;
-  const groupIndex  = {};   // grp  → index
-  const repoIndices = {};   // grp::repo → index
+  const groupIndex = {};
 
   let html = "";
   for (const grp of DATE_ORDER) {
     if (!byDate[grp]) continue;
-    const gi   = gIdx++;
+    const gi = gIdx++;
     groupIndex[grp] = gi;
     const gOpen = historyGroupOpen[grp] !== false;
+    const items = byDate[grp];
+
     html += `<div class="tree-group-header${gOpen?" open":""}" data-gi="${gi}">
       <span class="tree-expand-icon${gOpen?" open":""}">▶</span>
       ${escapeHtml(grp)}
-      <span style="font-size:10px;opacity:.5;margin-left:4px">(${Object.values(byDate[grp]).reduce((a,b)=>a+b.length,0)})</span>
+      <span style="font-size:10px;opacity:.5;margin-left:4px">(${items.length})</span>
     </div>
     <div class="tree-group-children${gOpen?"":" collapsed"}" data-gi-body="${gi}">`;
 
-    for (const [repo, items] of Object.entries(byDate[grp])) {
-      const rKey = `${grp}::${repo}`;
-      const ri = gIdx++;
-      repoIndices[rKey] = ri;
-      const rOpen = historyRepoOpen[rKey] !== false;
-      html += `<div class="tree-repo-header" data-ri="${ri}">
-        <span class="tree-expand-icon${rOpen?" open":""}">▶</span>
-        📁 ${escapeHtml(repo)}
-        <span style="font-size:10px;opacity:.5;margin-left:4px">(${items.length})</span>
-      </div>
-      <div class="tree-repo-children${rOpen?"":" collapsed"}" data-ri-body="${ri}">`;
-      for (const s of items) {
-        const statusCls = s.status === "done" ? "done" : s.status || "idle";
-        const time = s.createdAt ? fmtDate(s.createdAt) : (s.mtime ? fmtDate(s.mtime) : "");
-        html += `<div class="tree-session-item${viewingRel === s.rel?" selected":""}" data-rel="${escapeHtml(s.rel||"")}">
-          <div class="tree-session-row">
-            <span class="tree-session-name" title="${escapeHtml(s.label||s.title||"")}">
-              ${escapeHtml(s.label || s.title || "Unnamed")}
-            </span>
-            ${s.status ? `<span class="tree-session-status ${statusCls}">${escapeHtml(s.status)}</span>` : ""}
-          </div>
-          <div class="tree-session-time">${escapeHtml(time)}${s.messages ? ` · ${s.messages} msg` : ""}</div>
-        </div>`;
-      }
-      html += `</div>`;
+    for (const s of items) {
+      const histSt  = historyDisplayStatus(s.status);
+      const statusCls = histSt === "done" ? "done" : histSt;
+      const time = s.createdAt ? fmtDate(s.createdAt) : (s.mtime ? fmtDate(s.mtime) : "");
+      const repo = s.repo || "";
+      const isSelected = viewingRel === s.rel;
+      html += `<div class="tree-session-item${isSelected?" selected":""}" data-rel="${escapeHtml(s.rel||"")}">
+        <div class="tree-session-row">
+          <span class="tree-session-name" title="${escapeHtml(s.label||s.title||"")}">
+            ${escapeHtml(s.label || s.title || "Unnamed")}
+          </span>
+          ${histSt && histSt !== "idle" ? `<span class="tree-session-status ${statusCls}">${escapeHtml(histSt)}</span>` : ""}
+        </div>
+        <div class="tree-session-sub">
+          ${repo ? `<span class="tree-session-repo">📁 ${escapeHtml(repo)}</span>` : ""}
+          <span class="tree-session-time">${escapeHtml(time)}${s.messages ? ` · ${s.messages} msg` : ""}</span>
+        </div>
+      </div>`;
     }
     html += `</div>`;
   }
   treeEl.innerHTML = html;
 
-  // Wire group header expand/collapse (use data-gi index)
+  // Wire group header expand/collapse
   treeEl.querySelectorAll(".tree-group-header").forEach((hdr) => {
     hdr.addEventListener("click", () => {
-      // Find the group name from the rendered data
       const gi   = hdr.dataset.gi;
       const body = treeEl.querySelector(`[data-gi-body="${gi}"]`);
       const icon = hdr.querySelector(".tree-expand-icon");
@@ -1238,20 +1355,6 @@ function renderHistoryTree() {
       if (!grp || !body) return;
       const isOpen = historyGroupOpen[grp] !== false;
       historyGroupOpen[grp] = !isOpen;
-      icon.classList.toggle("open", !isOpen);
-      body.classList.toggle("collapsed", isOpen);
-    });
-  });
-  // Wire repo header expand/collapse
-  treeEl.querySelectorAll(".tree-repo-header").forEach((hdr) => {
-    hdr.addEventListener("click", () => {
-      const ri   = hdr.dataset.ri;
-      const body = treeEl.querySelector(`[data-ri-body="${ri}"]`);
-      const icon = hdr.querySelector(".tree-expand-icon");
-      const rKey = Object.entries(repoIndices).find(([,v]) => String(v) === ri)?.[0];
-      if (!rKey || !body) return;
-      const isOpen = historyRepoOpen[rKey] !== false;
-      historyRepoOpen[rKey] = !isOpen;
       icon.classList.toggle("open", !isOpen);
       body.classList.toggle("collapsed", isOpen);
     });
@@ -1331,23 +1434,140 @@ function appendMessageTo(container, m) {
 }
 
 // ─── WSL Distros panel ────────────────────────────────────────────────────────
-async function loadAndRenderWsl() {
-  const data = await getJson("/api/wsl/distros");
-  if (data) wslData = data;
-  renderWslList();
+// ─── Virtual Machines panel (WSL + Hyper-V + VMware + VirtualBox) ────────────
+let vmData = null;
+let vmLoading = false;
+
+async function loadAndRenderVMs() {
+  if (vmLoading) return;
+  const listEl = el("vms-list");
+  if (listEl && !vmData) listEl.innerHTML = '<div class="ctrl-hint">Scanning for virtual machines…</div>';
+  vmLoading = true;
+  try {
+    if (window.fleetApp?.getVMs) {
+      vmData = await window.fleetApp.getVMs();
+    } else {
+      // Fallback: fetch WSL distros from orchestrator
+      const d = await getJson("/api/wsl/distros");
+      vmData = (d?.distros || []).map((dist) => ({
+        type: "WSL", name: dist.name, state: /running/i.test(dist.state) ? "running" : "stopped",
+        stateRaw: dist.state, isDefault: dist.default, version: dist.version, ip: null, osInfo: null,
+      }));
+    }
+  } catch (e) {
+    console.error("VM scan error:", e);
+    vmData = [];
+  }
+  vmLoading = false;
+  renderVMsPanel();
 }
-function renderWslList() {
-  const listEl = el("wsl-list");
+
+// Legacy alias kept so any stray call still works
+async function loadAndRenderWsl() { return loadAndRenderVMs(); }
+function renderWslList() { renderVMsPanel(); }
+
+function renderVMsPanel() {
+  const listEl = el("vms-list");
   if (!listEl) return;
-  const distros = wslData?.distros || [];
-  if (!distros.length) { listEl.innerHTML = '<div class="ctrl-hint">No WSL distros found.</div>'; return; }
-  listEl.innerHTML = distros.map((d) => `
-    <div class="wsl-item">
-      <span class="wsl-name">🐧 ${escapeHtml(d.name)}</span>
-      ${d.default ? '<span class="wsl-default-tag">default</span>' : ""}
-      <span class="wsl-state ${/running/i.test(d.state) ? "running" : "stopped"}">${escapeHtml(d.state||"")}</span>
-      ${d.version ? `<span class="wsl-version">v${escapeHtml(d.version)}</span>` : ""}
-    </div>`).join("");
+  const vms = vmData || [];
+
+  if (!vms.length) {
+    listEl.innerHTML = '<div class="vm-none">No virtual machines found.<br><small>Requires Hyper-V, WSL, VMware Workstation or VirtualBox.</small></div>';
+    return;
+  }
+
+  // Group by type
+  const groups = {};
+  const errors = {};
+  const TYPE_ORDER = ["WSL", "Hyper-V", "VMware", "VirtualBox"];
+  for (const vm of vms) {
+    if (vm._error) { errors[vm.type] = vm._error; continue; }
+    if (!groups[vm.type]) groups[vm.type] = [];
+    groups[vm.type].push(vm);
+  }
+
+  // Sort each group: running first, then alphabetical
+  for (const g of Object.values(groups)) {
+    g.sort((a, b) => {
+      if (a.state === b.state) return a.name.localeCompare(b.name);
+      return a.state === "running" ? -1 : 1;
+    });
+  }
+
+  const typeIcon = { WSL: "🐧", "Hyper-V": "🪟", VMware: "💿", VirtualBox: "📦" };
+  const typeBadgeClass = { WSL: "", "Hyper-V": "hyper-v", VMware: "vmware", VirtualBox: "virtualbox" };
+
+  let html = "";
+  for (const type of [...TYPE_ORDER, ...Object.keys(groups).filter((k) => !TYPE_ORDER.includes(k))]) {
+    const items = groups[type];
+    const errMsg = errors[type];
+    if (!items && !errMsg) continue;
+
+    const running = (items || []).filter((v) => v.state === "running").length;
+    const count   = (items || []).length;
+    html += `<div class="vm-section-title">${escapeHtml(type)}${count ? ` · ${count} (${running} running)` : ""}</div>`;
+
+    // Show error (e.g. needs elevation, module not found)
+    if (errMsg) {
+      const needsElevation = /Access.*denied|Administrator|elevation|privilege/i.test(errMsg);
+      html += `<div class="vm-error">
+        ${needsElevation
+          ? `⚠️ Needs elevation — run Fleet Console as <strong>Administrator</strong> to query ${escapeHtml(type)}.`
+          : `⚠️ ${escapeHtml(errMsg.split("\n")[0].slice(0, 160))}`}
+      </div>`;
+      if (!items) continue;
+    }
+
+    for (const vm of items) {
+      const isRunning = vm.state === "running";
+      const badgeCls = typeBadgeClass[type] || "";
+      const icon = typeIcon[type] || "💻";
+
+      // Build meta row for running machines
+      let metaParts = [];
+      if (isRunning) {
+        if (vm.osInfo) metaParts.push(`<span>${escapeHtml(vm.osInfo)}</span>`);
+        if (vm.ip)    metaParts.push(`<span class="vm-meta-ip">⬡ ${escapeHtml(vm.ip)}</span>`);
+        if (vm.memGb != null) metaParts.push(`<span>RAM ${vm.memGb}GB</span>`);
+        if (vm.cpu  != null && vm.cpu > 0) metaParts.push(`<span>CPU ${vm.cpu}%</span>`);
+        if (vm.gen)  metaParts.push(`<span>Gen${vm.gen}</span>`);
+        if (vm.version) metaParts.push(`<span>WSL${vm.version}</span>`);
+      }
+
+      html += `<div class="vm-card${isRunning ? " running" : ""}">
+        <div class="vm-card-header">
+          <span class="vm-state-dot ${vm.state}"></span>
+          <span class="vm-name" title="${escapeHtml(vm.name)}">${icon} ${escapeHtml(vm.name)}</span>
+          ${vm.isDefault ? '<span class="vm-type-badge">default</span>' : ""}
+          <span class="vm-type-badge ${badgeCls}">${escapeHtml(vm.stateRaw || vm.state)}</span>
+        </div>
+        ${metaParts.length ? `<div class="vm-meta">${metaParts.join("")}</div>` : ""}
+        <div class="vm-actions">
+          ${(isRunning || type === "WSL") ? `
+            <button class="vm-btn primary" data-vm-new data-vm-name="${escapeHtml(vm.name)}" data-vm-type="${escapeHtml(type)}" data-vm-ip="${escapeHtml(vm.ip||"")}">
+              ＋ New Session
+            </button>
+            ${isRunning && vm.ip ? `<button class="vm-btn" data-vm-ssh data-vm-ip="${escapeHtml(vm.ip)}" data-vm-name="${escapeHtml(vm.name)}">SSH</button>` : ""}
+            ${!isRunning && type === "WSL" ? `<span class="vm-hint-inline" title="The distro starts automatically when the session launches">starts on launch</span>` : ""}
+          ` : `<span style="font-size:10px;color:var(--gh-muted)">Start to create a session</span>`}
+        </div>
+      </div>`;
+    }
+  }
+
+  listEl.innerHTML = html;
+
+  // Wire "New Session" buttons — reuse the shared modal opener so the repo dropdown,
+  // extra-repos field and host rows are all set up the same as the toolbar button.
+  listEl.querySelectorAll("[data-vm-new]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const name = btn.dataset.vmName;
+      const type = btn.dataset.vmType;
+      if (type === "WSL")          openNewSessionModal({ host: "wsl",    distro: name, label: name });
+      else if (type === "Hyper-V") openNewSessionModal({ host: "hyperv", vmName: name, label: name });
+      else                         openNewSessionModal({ host: "local",  label: name });
+    });
+  });
 }
 
 // ─── Repos checkbox tree ──────────────────────────────────────────────────────
@@ -1362,6 +1582,11 @@ async function loadRepos() {
   if (data) {
     reposData = data;
     if (activeRightPanel === "repos") renderReposTree();
+    else if (activeRightPanel === "directories") {
+      // Refresh any open repo-tree pickers in the Directories panel with the loaded data.
+      if (dirCwdTreeShown) renderDirTree("dir-cwd-tree", "cwd");
+      if (dirAddTreeShown) renderDirTree("dir-add-tree", "add");
+    }
   }
 }
 
@@ -1377,13 +1602,16 @@ function renderReposTree() {
   for (const group of groups) {
     const key = `${group.host}::${group.label}`;
     const isOpen = reposGroupOpen[key] !== false;
-    const icon = isOpen ? "▼" : "▶";
     html += `<div class="repos-group-header" data-repo-group="${escapeHtml(key)}">
       <span class="tree-expand-icon${isOpen?" open":""}">▶</span>
       ${group.host === "wsl" ? "🐧" : "💻"} ${escapeHtml(group.label)}
-      <span class="muted" style="font-size:10px;margin-left:4px">(${group.repos.length})</span>
+      ${group.stopped ? `<span class="repo-stopped-tag">stopped</span>` : `<span class="muted" style="font-size:10px;margin-left:4px">(${group.repos.length})</span>`}
     </div>
     <div class="repos-group-children${isOpen?"":" collapsed"}" data-repo-group-body="${escapeHtml(key)}">`;
+    if (group.stopped) {
+      // Repos aren't enumerated for a stopped distro (would auto-start it). Offer an on-demand load.
+      html += `<button class="repos-load-btn" data-load-distro="${escapeHtml(group.distro)}">▸ Start distro &amp; list repos</button>`;
+    }
     for (const repo of group.repos) {
       const isChecked = checkedRepos.has(repo.path);
       html += `<div class="repo-check-item">
@@ -1423,8 +1651,29 @@ function renderReposTree() {
     });
   });
 
+  // Wire stopped-distro lazy loaders
+  container.querySelectorAll(".repos-load-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => { e.stopPropagation(); loadStoppedDistroRepos(btn.dataset.loadDistro, btn); });
+  });
+
   // Apply button
   el("repos-apply")?.addEventListener("click", applyCheckedReposToSession);
+}
+
+/** Fetch a stopped distro's repos on demand (starts the distro) and merge them into reposData. */
+async function loadStoppedDistroRepos(distro, btn) {
+  if (!distro) return;
+  if (btn) { btn.disabled = true; btn.textContent = `Scanning ${distro}…`; }
+  const data = await getJson(`/api/wsl/repos?distro=${encodeURIComponent(distro)}`);
+  const paths = (data?.repos || []).slice().sort();
+  // Merge into the cached group so a re-render keeps them and the count updates.
+  const group = (reposData?.groups || []).find((g) => g.host === "wsl" && g.distro === distro);
+  if (group) {
+    group.repos = paths.map((p) => ({ path: p, name: p.split("/").filter(Boolean).pop() || p, branch: null, changes: null }));
+    group.stopped = false;
+    reposGroupOpen[`${group.host}::${group.label}`] = true;
+  }
+  renderReposTree();
 }
 
 function syncAllRepoCheckboxes() {
@@ -1452,6 +1701,230 @@ async function applyCheckedReposToSession() {
   const dirs = [...(s.additionalDirectories || []), ...toAdd];
   await api(`/api/sessions/${s.id}/set-directories`, { directories: dirs });
   lastControlsSig = "";
+}
+
+// ─── Directories panel ─────────────────────────────────────────────────────────
+// Local working copy so in-progress edits survive periodic re-renders; re-seeded when the
+// selected session changes.
+let dirPanel = { sid: null, dirs: [], cwd: "" };
+let dirTreeOpen = {};        // per-group expand state for the dir-panel repo trees
+let dirCwdTreeShown = false; // working-dir browse tree expanded?
+let dirAddTreeShown = false; // add-dir browse tree expanded?
+
+function seedDirPanel(s) {
+  const access = s.directoryAccess || {};
+  dirPanel = {
+    sid: s.id,
+    cwd: s.cwd || "",
+    dirs: (s.additionalDirectories || []).map((p) => ({ path: p, access: access[p] === "read" ? "read" : "write" })),
+  };
+  dirCwdTreeShown = false;
+  dirAddTreeShown = false;
+}
+
+// Called on panel-open and on every fleet update. To avoid clobbering in-progress typing/trees, only
+// (re)build the skeleton when the session changes or it hasn't been built; edits re-render granularly.
+function renderDirectoriesPanel() {
+  const host = el("dir-panel-body");
+  if (!host) return;
+  const s = latest?.sessions?.find((x) => x.id === selectedId);
+  if (!s) {
+    dirPanel = { sid: null, dirs: [], cwd: "" };
+    host.innerHTML = `<div class="rp-hint">Select a session to manage its working directory and extra folders.</div>`;
+    return;
+  }
+  if (dirPanel.sid !== s.id) { seedDirPanel(s); buildDirPanel(s); return; }
+  if (!host.querySelector(".dir-section")) buildDirPanel(s);  // first build for this session
+}
+
+function buildDirPanel(s) {
+  const host = el("dir-panel-body");
+  if (!host) return;
+  const wslLike = s.host === "wsl";
+  host.innerHTML = `
+    <div class="dir-section">
+      <div class="dir-label">Working directory</div>
+      <div class="dir-cwd-row">
+        <input id="dir-cwd" value="${escapeHtml(dirPanel.cwd)}" placeholder="${wslLike ? "/home/user/app" : "E:/GitHub/app"}" />
+        <button id="dir-cwd-browse" class="btn-secondary" title="Pick from repositories">📁</button>
+        <button id="dir-cwd-apply" class="btn-secondary">Change</button>
+      </div>
+      <div id="dir-cwd-tree" class="dir-tree${dirCwdTreeShown ? "" : " hidden"}"></div>
+      <div class="dir-hint">Switches the working dir live and tells Claude to work there — the conversation is kept.</div>
+    </div>
+    <div class="dir-section">
+      <div class="dir-label">Additional directories <span class="muted">(<span id="dir-count">${dirPanel.dirs.length}</span>)</span></div>
+      <div class="dir-list" id="dir-list"></div>
+      <button id="dir-add-browse" class="dir-browse-btn">📁 Add from repositories ${dirAddTreeShown ? "▲" : "▼"}</button>
+      <div id="dir-add-tree" class="dir-tree${dirAddTreeShown ? "" : " hidden"}"></div>
+      <div class="dir-add-row">
+        <input id="dir-add-input" placeholder="${wslLike ? "/home/user/other-repo" : "or type a path…"}" />
+        <button id="dir-add-btn" class="btn-secondary">+ Add</button>
+      </div>
+      <button id="dir-update" class="dir-update-btn">Update &amp; tell Claude</button>
+      <div class="dir-hint">Read-only folders are enforced (edits blocked) and Claude is told the policy.</div>
+    </div>`;
+
+  renderDirList();
+  if (dirCwdTreeShown) renderDirTree("dir-cwd-tree", "cwd");
+  if (dirAddTreeShown) renderDirTree("dir-add-tree", "add");
+
+  el("dir-cwd-apply")?.addEventListener("click", changeSessionCwd);
+  el("dir-update")?.addEventListener("click", updateDirectories);
+  el("dir-cwd-browse")?.addEventListener("click", () => {
+    dirCwdTreeShown = !dirCwdTreeShown;
+    el("dir-cwd-tree").classList.toggle("hidden", !dirCwdTreeShown);
+    if (dirCwdTreeShown) renderDirTree("dir-cwd-tree", "cwd");
+  });
+  el("dir-add-browse")?.addEventListener("click", () => {
+    dirAddTreeShown = !dirAddTreeShown;
+    const t = el("dir-add-tree"); t.classList.toggle("hidden", !dirAddTreeShown);
+    el("dir-add-browse").textContent = `📁 Add from repositories ${dirAddTreeShown ? "▲" : "▼"}`;
+    if (dirAddTreeShown) renderDirTree("dir-add-tree", "add");
+  });
+  el("dir-add-btn")?.addEventListener("click", () => {
+    const inp = el("dir-add-input");
+    const p = (inp?.value || "").trim();
+    if (!p) return;
+    if (!dirPanel.dirs.some((d) => d.path === p)) dirPanel.dirs.push({ path: p, access: "write" });
+    if (inp) inp.value = "";
+    renderDirList();
+    if (dirAddTreeShown) renderDirTree("dir-add-tree", "add");
+  });
+}
+
+// Re-render only the list of chosen directories (toggles + remove), not the whole panel.
+function renderDirList() {
+  const list = el("dir-list");
+  if (!list) return;
+  list.innerHTML = dirPanel.dirs.length ? dirPanel.dirs.map((d, i) => {
+    const isWrite = d.access !== "read";
+    return `<div class="dir-item">
+      <label class="dir-acc ${isWrite ? "write" : "read"}" title="Toggle read-only / write">
+        <input type="checkbox" class="dir-write" data-i="${i}"${isWrite ? " checked" : ""}/>
+        <span>${isWrite ? "write" : "read-only"}</span>
+      </label>
+      <span class="dir-path" title="${escapeHtml(d.path)}">${escapeHtml(d.path)}</span>
+      <button class="dir-remove" data-i="${i}" title="Remove">✕</button>
+    </div>`;
+  }).join("") : '<div class="dir-hint">No extra directories yet — pick from the tree below or type a path.</div>';
+  const cnt = el("dir-count"); if (cnt) cnt.textContent = dirPanel.dirs.length;
+  list.querySelectorAll(".dir-write").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      const i = +cb.dataset.i;
+      if (dirPanel.dirs[i]) dirPanel.dirs[i].access = cb.checked ? "write" : "read";
+      renderDirList();
+    });
+  });
+  list.querySelectorAll(".dir-remove").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      dirPanel.dirs.splice(+btn.dataset.i, 1);
+      renderDirList();
+      if (dirAddTreeShown) renderDirTree("dir-add-tree", "add");
+    });
+  });
+}
+
+// Build the collapsible repo tree (same data as the Repositories panel). `checkedSet` (a Set of
+// already-chosen paths) shows checkboxes for the multi-select "add" tree; null = single-pick "cwd".
+function repoGroupsTreeHtml(checkedSet) {
+  const groups = reposData?.groups || [];
+  if (!groups.length) return '<div class="dir-hint">No repositories found. Check repos.localRoots in config, or type a path.</div>';
+  let html = "";
+  for (const group of groups) {
+    const key = `${group.host}::${group.label}`;
+    const isOpen = dirTreeOpen[key] !== false;
+    html += `<div class="dirtree-group" data-key="${escapeHtml(key)}">
+      <span class="tree-expand-icon${isOpen ? " open" : ""}">▶</span>
+      ${group.host === "wsl" ? "🐧" : "💻"} ${escapeHtml(group.label)}
+      ${group.stopped ? '<span class="repo-stopped-tag">stopped</span>' : `<span class="muted" style="font-size:10px;margin-left:4px">(${group.repos.length})</span>`}
+    </div>
+    <div class="dirtree-children${isOpen ? "" : " collapsed"}">`;
+    if (group.stopped) {
+      html += `<button class="repos-load-btn" data-load-distro="${escapeHtml(group.distro)}">▸ Start distro &amp; list repos</button>`;
+    }
+    for (const repo of group.repos) {
+      const picked = checkedSet && checkedSet.has(repo.path);
+      html += `<div class="dirtree-item${picked ? " picked" : ""}" data-path="${escapeHtml(repo.path)}" title="${escapeHtml(repo.path)}">
+        <span class="dirtree-check">${checkedSet ? (picked ? "☑" : "☐") : "▸"}</span>
+        <span class="repo-name">${escapeHtml(repo.name)}</span>
+        ${repo.branch ? `<span class="repo-branch">${escapeHtml(repo.branch)}</span>` : ""}
+      </div>`;
+    }
+    html += `</div>`;
+  }
+  return html;
+}
+
+function renderDirTree(containerId, mode) {
+  const c = el(containerId);
+  if (!c) return;
+  if (!reposData) {
+    // loadRepos() re-renders open dir trees once data arrives (see loadRepos), so just kick it off.
+    c.innerHTML = '<div class="dir-hint">Loading repositories…</div>';
+    if (!reposLoading) loadRepos();
+    return;
+  }
+  const checkedSet = mode === "add" ? new Set(dirPanel.dirs.map((d) => d.path)) : null;
+  c.innerHTML = repoGroupsTreeHtml(checkedSet);
+  c.querySelectorAll(".dirtree-group").forEach((hdr) => {
+    hdr.addEventListener("click", (e) => {
+      if (e.target.closest(".repos-load-btn")) return;
+      const key = hdr.dataset.key;
+      dirTreeOpen[key] = dirTreeOpen[key] === false; // flip (default open)
+      renderDirTree(containerId, mode);
+    });
+  });
+  c.querySelectorAll(".repos-load-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      loadStoppedDistroRepos(btn.dataset.loadDistro, btn).then(() => renderDirTree(containerId, mode));
+    });
+  });
+  c.querySelectorAll(".dirtree-item").forEach((item) => {
+    item.addEventListener("click", () => {
+      const p = item.dataset.path;
+      if (mode === "cwd") {
+        const inp = el("dir-cwd"); if (inp) inp.value = p;
+        dirPanel.cwd = p;
+        dirCwdTreeShown = false;
+        c.classList.add("hidden");
+      } else {
+        const idx = dirPanel.dirs.findIndex((d) => d.path === p);
+        if (idx === -1) dirPanel.dirs.push({ path: p, access: "write" }); else dirPanel.dirs.splice(idx, 1);
+        renderDirList();
+        renderDirTree(containerId, mode); // refresh checkmarks
+      }
+    });
+  });
+}
+
+async function updateDirectories() {
+  if (!selectedId) { alert("Select a session first."); return; }
+  // Persist the working copy so a refresh mid-request doesn't reset the field.
+  const cwdInput = el("dir-cwd"); if (cwdInput) dirPanel.cwd = cwdInput.value.trim();
+  const btn = el("dir-update");
+  if (btn) { btn.disabled = true; btn.textContent = "Updating…"; }
+  const r = await api(`/api/sessions/${selectedId}/set-directories`, {
+    directories: dirPanel.dirs.map((d) => ({ path: d.path, access: d.access })),
+    inject: true,
+  });
+  if (btn) { btn.disabled = false; btn.textContent = "Update & tell Claude"; }
+  if (!r?.ok) alert("Failed to update directories (is the session runner alive?).");
+  lastControlsSig = "";
+}
+
+async function changeSessionCwd() {
+  if (!selectedId) { alert("Select a session first."); return; }
+  const newCwd = (el("dir-cwd")?.value || "").trim();
+  if (!newCwd) { alert("Enter a working directory."); return; }
+  dirPanel.cwd = newCwd;
+  const btn = el("dir-cwd-apply");
+  if (btn) { btn.disabled = true; btn.textContent = "Switching…"; }
+  const r = await api(`/api/sessions/${selectedId}/set-cwd`, { cwd: newCwd });
+  if (btn) { btn.disabled = false; btn.textContent = "Change"; }
+  if (!r?.ok) { alert("Failed to change working directory (is the session runner alive?)."); return; }
+  dirPanel.sid = null; // re-seed from server so the new dir shows in the list
 }
 
 // ─── Usage view ────────────────────────────────────────────────────────────────
@@ -1508,15 +1981,133 @@ function renderUsageView() {
 }
 
 // ─── New session modal ─────────────────────────────────────────────────────────
-function openNewSessionModal() {
-  // Pre-populate extra dirs from checked repos
-  const checkedList = [...checkedRepos].join("\n");
-  if (checkedList) el("f-extra-dirs").value = checkedList;
-  // Populate distro options
-  populateNewSessionDistros();
-  // Populate repo options
-  populateNewSessionRepos();
+// Show/hide the host-specific rows and populate the matching Repository list. Shared by the
+// host <select> change handler AND programmatic opens (so every entry point sets up identically).
+function applyHostSelection() {
+  const host     = el("f-host").value;
+  const isWsl    = host === "wsl";
+  const isHyperV = host === "hyperv";
+  el("f-distro-row").classList.toggle("hidden", !isWsl);
+  el("f-hyperv-row").style.display = isHyperV ? "" : "none";
+  el("f-repos-row").classList.remove("hidden");
+  el("vm-browser").classList.add("hidden");
+  showHypervError("");
+  // Repository picker: VM repos for Hyper-V, the selected distro's repos for WSL,
+  // the local list otherwise.
+  if (isHyperV)     populateHypervRepos();
+  else if (isWsl)   populateWslRepos(el("f-distro").value);
+  else              populateNewSessionRepos();
+  const browseBtn = el("btn-browse-cwd");
+  if (browseBtn) browseBtn.style.display = (isWsl || isHyperV) ? "" : "none";
+}
+
+/**
+ * Open the New Session modal. `prefill` lets a caller (e.g. a VM/distro card) pre-select the
+ * host, distro or Hyper-V VM and seed the label; without it the modal opens for the default host.
+ */
+function openNewSessionModal(prefill = {}) {
+  // Reset fields so a prior open never leaks state into this one.
+  el("f-label").value  = prefill.label || "";
+  el("f-cwd").value    = "";
+  el("f-prompt").value = "";
+  el("f-host").value   = prefill.host || lastSettings?.["session.defaultHost"] || "local";
+  // Seed extra dirs from checked repos only on a plain open (not when prefilling from a VM card).
+  el("f-extra-dirs").value = prefill.host ? "" : [...checkedRepos].join("\n");
+
+  populateNewSessionDistros().then(() => {
+    if (prefill.distro && el("f-distro")) {
+      if ([...el("f-distro").options].some((o) => o.value === prefill.distro)) el("f-distro").value = prefill.distro;
+    }
+    // Load repos for the now-selected distro (prefilled or the default first option).
+    if (el("f-host").value === "wsl") populateWslRepos(el("f-distro").value);
+  });
+  populateHypervVMs().then(() => {
+    if (prefill.vmName && el("f-hyperv-vm")) {
+      if ([...el("f-hyperv-vm").options].some((o) => o.value === prefill.vmName)) el("f-hyperv-vm").value = prefill.vmName;
+      if (el("f-host").value === "hyperv") populateHypervRepos();
+    }
+  });
+  applyHostSelection();              // shows correct rows + populates the repo dropdown
+  el("vm-browser").classList.add("hidden");
   el("new-modal").classList.remove("hidden");
+}
+
+async function populateHypervVMs({ refresh = false } = {}) {
+  const sel = el("f-hyperv-vm");
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Loading VMs…</option>';
+  // Use cached vmData if available, otherwise fetch fresh (refresh forces a rescan)
+  if (refresh) vmData = null;
+  const vms = vmData || (window.fleetApp?.getVMs ? await window.fleetApp.getVMs() : []);
+  if (!vmData && vms.length) vmData = vms;
+  const hvVMs = vms.filter((v) => v.type === "Hyper-V" && !v._error);
+  sel.innerHTML = "";
+  if (!hvVMs.length) {
+    sel.innerHTML = '<option value="">No Hyper-V VMs found</option>';
+    return;
+  }
+  for (const vm of hvVMs) {
+    const opt = document.createElement("option");
+    opt.value = vm.name;
+    opt.textContent = `${vm.name} (${vm.state})`;
+    opt.dataset.state = vm.state;
+    sel.appendChild(opt);
+  }
+  // Auto-load repos for the first (selected) VM so the picker is populated on open.
+  if (el("f-host")?.value === "hyperv") populateHypervRepos();
+}
+
+/** Credentials typed into the Hyper-V section (in-memory only, never persisted). */
+function getHypervCreds() {
+  return { user: el("f-hv-user")?.value.trim() || "", pass: el("f-hv-pass")?.value || "" };
+}
+function showHypervError(msg) {
+  const e = el("f-hyperv-error");
+  if (!e) return;
+  e.textContent = msg;
+  e.style.display = msg ? "" : "none";
+}
+
+/** Discover and list git repos inside the selected Hyper-V VM (OS-detected on the guest). */
+async function populateHypervRepos() {
+  const sel = el("f-repos");
+  if (!sel) return;
+  const vmName = el("f-hyperv-vm")?.value;
+  el("f-repos-row").classList.remove("hidden");
+  if (!vmName) { sel.innerHTML = '<option value="">— select a VM first —</option>'; return; }
+  showHypervError("");
+  sel.innerHTML = `<option value="">Scanning ${vmName} for repos…</option>`;
+  sel.disabled = true;
+
+  let res = null;
+  try {
+    res = window.fleetApp?.listVMRepos
+      ? await window.fleetApp.listVMRepos({ vmType: "Hyper-V", vmName, ...getHypervCreds() })
+      : { error: "VM bridge unavailable" };
+  } catch (e) { res = { error: String(e?.message || e) }; }
+  sel.disabled = false;
+
+  if (res?.error) {
+    showHypervError(res.error);
+    sel.innerHTML = '<option value="">— no repos (see message above) —</option>';
+    return;
+  }
+  const repos = res?.repos || [];
+  const osLabel = res?.os ? ` (${res.os} guest)` : "";
+  sel.innerHTML = `<option value="">— choose repo${osLabel} —</option>`;
+  for (const r of repos) {
+    const opt = document.createElement("option");
+    opt.value = r.path;
+    const meta = r.branch ? `  · ${r.branch}${r.changes ? ` (${r.changes}±)` : ""}` : "";
+    opt.textContent = `${r.name}${meta}`;
+    sel.appendChild(opt);
+  }
+  if (!repos.length) {
+    const opt = document.createElement("option");
+    opt.disabled = true;
+    opt.textContent = "No git repos found in configured roots (edit vm.repoRoots in Settings)";
+    sel.appendChild(opt);
+  }
 }
 
 async function populateNewSessionDistros() {
@@ -1544,18 +2135,149 @@ async function populateNewSessionRepos() {
   if (sel.options.length > 1) el("f-repos-row").classList.remove("hidden");
 }
 
+/**
+ * Repos for a specific WSL distro. Uses /api/wsl/repos which runs `wsl -d <distro>` and so
+ * lists repos even for a STOPPED distro (the call auto-starts it) — unlike /api/repos, which
+ * the orchestrator builds only from already-running distros.
+ */
+async function populateWslRepos(distro) {
+  const sel = el("f-repos");
+  if (!sel) return;
+  el("f-repos-row").classList.remove("hidden");
+  if (!distro) { sel.innerHTML = '<option value="">— select a distro —</option>'; return; }
+  sel.innerHTML = `<option value="">Scanning ${escapeHtml(distro)} for repos…</option>`;
+  sel.disabled = true;
+  const data = await getJson(`/api/wsl/repos?distro=${encodeURIComponent(distro)}`);
+  sel.disabled = false;
+  // Guard against a stale response if the user changed distro while this was in flight.
+  if (el("f-host").value !== "wsl" || el("f-distro").value !== distro) return;
+  const repos = (data?.repos || []).slice().sort();
+  sel.innerHTML = '<option value="">— choose repo —</option>';
+  for (const p of repos) {
+    const opt = document.createElement("option");
+    opt.value = p;
+    opt.textContent = `${p.split("/").filter(Boolean).pop() || p}  (${distro})`;
+    sel.appendChild(opt);
+  }
+  if (!repos.length) {
+    const opt = document.createElement("option");
+    opt.disabled = true;
+    opt.textContent = "No git repos found in this distro";
+    sel.appendChild(opt);
+  }
+}
+
+// ─── VM folder browser ────────────────────────────────────────────────────────
+let vmBrowserState = { path: "/", vmType: null, vmName: null, targetField: "cwd" };
+
+function getVMHostInfo() {
+  const host = el("f-host")?.value;
+  if (host === "wsl")   return { vmType: "WSL",    vmName: el("f-distro")?.value };
+  if (host === "hyperv") return { vmType: "Hyper-V", vmName: el("f-hyperv-vm")?.value };
+  return null;
+}
+
+async function openVMBrowser(targetField = "cwd") {
+  const info = getVMHostInfo();
+  if (!info?.vmName) { alert("Select a VM/distro first."); return; }
+  vmBrowserState.vmType      = info.vmType;
+  vmBrowserState.vmName      = info.vmName;
+  vmBrowserState.targetField = targetField;
+  // Use current cwd as starting path if set, else default
+  const cur = el("f-cwd")?.value.trim();
+  vmBrowserState.path = cur || (info.vmType === "WSL" ? "/home" : "C:\\");
+  el("vm-browser").classList.remove("hidden");
+  el("vm-browser-target").textContent = targetField === "cwd" ? "(working dir)" : "(extra repo)";
+  await loadVMBrowserDir(vmBrowserState.path);
+}
+
+async function loadVMBrowserDir(dirPath) {
+  const listEl = el("vm-browser-list");
+  listEl.innerHTML = '<div class="vm-browser-loading">Loading…</div>';
+  el("vm-browser-path").textContent = dirPath;
+  vmBrowserState.path = dirPath;
+
+  let dirs = [];
+  try {
+    if (window.fleetApp?.listVMDirs) {
+      dirs = await window.fleetApp.listVMDirs({
+        vmType: vmBrowserState.vmType,
+        vmName: vmBrowserState.vmName,
+        dirPath,
+        ...(vmBrowserState.vmType === "Hyper-V" ? getHypervCreds() : {}),
+      });
+    }
+  } catch (e) { /* ignore */ }
+
+  if (!dirs.length) {
+    listEl.innerHTML = '<div class="vm-browser-empty">No subdirectories found (or access denied)</div>';
+    return;
+  }
+
+  listEl.innerHTML = dirs.map((d) =>
+    `<div class="vm-browser-item" data-path="${escapeHtml(d.path)}" data-name="${escapeHtml(d.name)}">
+      📁 ${escapeHtml(d.name)}
+    </div>`
+  ).join("");
+
+  listEl.querySelectorAll(".vm-browser-item").forEach((item) => {
+    item.addEventListener("click", (e) => {
+      // Single click selects, double-click navigates into
+      listEl.querySelectorAll(".vm-browser-item").forEach((i) => i.classList.remove("selected"));
+      item.classList.add("selected");
+      if (e.detail === 2) loadVMBrowserDir(item.dataset.path);
+    });
+  });
+}
+
+function vmBrowserUp() {
+  const p = vmBrowserState.path;
+  const sep = p.includes("\\") ? "\\" : "/";
+  const parts = p.split(/[\\/]/).filter(Boolean);
+  parts.pop();
+  const parent = parts.length
+    ? (sep === "\\" ? parts.join("\\") + "\\" : "/" + parts.join("/"))
+    : (sep === "\\" ? "C:\\" : "/");
+  loadVMBrowserDir(parent);
+}
+
+function vmBrowserApply(addAsRepo = false) {
+  const selected = el("vm-browser-list")?.querySelector(".vm-browser-item.selected");
+  const chosenPath = selected ? selected.dataset.path : vmBrowserState.path;
+  if (addAsRepo) {
+    const ta = el("f-extra-dirs");
+    const existing = ta.value.trim();
+    ta.value = existing ? existing + "\n" + chosenPath : chosenPath;
+  } else {
+    el("f-cwd").value = chosenPath;
+  }
+  el("vm-browser").classList.add("hidden");
+}
+
 async function createNewSession() {
-  const host = el("f-host").value;
-  const distro = host === "wsl" ? el("f-distro").value : "";
+  const host   = el("f-host").value;
+  const distro = host === "wsl"    ? el("f-distro").value    : "";
+  const hvVM   = host === "hyperv" ? el("f-hyperv-vm").value : "";
   const repoSel = el("f-repos").value;
   let cwd = el("f-cwd").value.trim();
   if (!cwd && repoSel) cwd = repoSel;
   if (!cwd) { alert("Working directory is required."); return; }
+  // A WSL session's cwd must be a Linux path inside the distro; a leftover Windows path
+  // (e.g. E:/GitHub/app) would make the runner chdir to a path that doesn't exist in the guest.
+  if (host === "wsl" && /^[A-Za-z]:[\\/]/.test(cwd)) {
+    alert("This is a Windows path, but the host is WSL. Pick a repo from the dropdown or enter a Linux path (e.g. /home/user/app).");
+    return;
+  }
 
+  const realHost  = host === "hyperv" ? "local" : host; // hyperv sessions run as local+SSH later
+  const realLabel = hvVM ? `[${hvVM}] ${el("f-label").value.trim() || cwd.split(/[\\/]/).pop()}`
+                         : (el("f-label").value.trim() || cwd.split(/[\\/]/).pop());
   const extraDirs = el("f-extra-dirs").value.split("\n").map((s) => s.trim()).filter(Boolean);
   const spec = {
-    label:                el("f-label").value.trim() || cwd.split(/[\\/]/).pop(),
-    host, distro, cwd,
+    label:                realLabel,
+    host:                 realHost,
+    distro,
+    cwd,
     additionalDirectories: extraDirs,
     model:                el("f-model").value.trim(),
     mode:                 el("f-mode").value,
@@ -1684,6 +2406,18 @@ function setupWindowControls() {
 function setupPeriodicRefresh() {
   // Repos: every 30 s
   setInterval(loadRepos, 30000);
+  // VM/WSL state (running/stopped) while the panel is open AND the window is visible: every
+  // 30 s. get-vms is a heavy multi-process scan, so we skip it when the window is hidden/
+  // minimised (no point polling what nobody's looking at). loadAndRenderVMs keeps the current
+  // list on screen while it re-fetches, so this never flashes. Also revalidate immediately when
+  // the window becomes visible again with the panel open.
+  setInterval(() => {
+    if (document.hidden) return;
+    if (activeRightPanel === "vms" || activeRightPanel === "wsl") loadAndRenderVMs();
+  }, 30000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && (activeRightPanel === "vms" || activeRightPanel === "wsl")) loadAndRenderVMs();
+  });
   // Tick countdowns every second (activity bar + status bar 5h reset)
   setInterval(() => {
     if (!latest) return;
@@ -1717,10 +2451,16 @@ function wireStaticListeners() {
 
   // Usage right panel toggle — no longer needed (always visible in right sidebar)
   // but keep btn-toggle-usage wired to switchRightPanel for the RAB icon
-  el("btn-refresh-wsl")?.addEventListener("click", loadAndRenderWsl);
+  el("btn-refresh-vms")?.addEventListener("click", () => { vmData = null; loadAndRenderVMs(); });
+  el("btn-refresh-wsl")?.addEventListener("click", () => { vmData = null; loadAndRenderVMs(); });
 
   // New session button
-  el("btn-new-session").addEventListener("click", openNewSessionModal);
+  el("btn-new-session").addEventListener("click", () => openNewSessionModal());
+
+  // Settings editor
+  el("btn-settings")?.addEventListener("click", openSettingsModal);
+  el("settings-cancel")?.addEventListener("click", () => el("settings-modal").classList.add("hidden"));
+  el("settings-save")?.addEventListener("click", saveSettingsFromEditor);
 
   // Set reset time
   el("btn-set-reset").addEventListener("click", () => {
@@ -1730,13 +2470,32 @@ function wireStaticListeners() {
   });
 
   // New session modal
-  el("f-cancel").addEventListener("click", () => el("new-modal").classList.add("hidden"));
-  el("f-create").addEventListener("click", createNewSession);
-  el("f-host").addEventListener("change", (e) => {
-    const isWsl = e.target.value === "wsl";
-    el("f-distro-row").classList.toggle("hidden", !isWsl);
-    el("f-repos-row").classList.toggle("hidden", false);
+  el("f-cancel").addEventListener("click", () => {
+    el("new-modal").classList.add("hidden");
+    el("vm-browser").classList.add("hidden");
   });
+  el("f-create").addEventListener("click", createNewSession);
+  el("f-host").addEventListener("change", () => {
+    applyHostSelection();
+  });
+  // Re-scan repos when the selected WSL distro or Hyper-V VM changes
+  el("f-distro")?.addEventListener("change", () => populateWslRepos(el("f-distro").value));
+  el("f-hyperv-vm")?.addEventListener("change", () => populateHypervRepos());
+  // Manual VM rescan
+  el("btn-refresh-hv-vms")?.addEventListener("click", () => populateHypervVMs({ refresh: true }));
+  // Picking a repo fills the working directory
+  el("f-repos")?.addEventListener("change", (e) => {
+    if (e.target.value) el("f-cwd").value = e.target.value;
+  });
+
+  // VM folder browser buttons
+  el("btn-browse-cwd")?.addEventListener("click", () => openVMBrowser("cwd"));
+  el("vm-browser-up")?.addEventListener("click",  vmBrowserUp);
+  el("vm-browser-cancel")?.addEventListener("click",   () => el("vm-browser").classList.add("hidden"));
+  el("vm-browser-select")?.addEventListener("click",   () => vmBrowserApply(false));
+  el("vm-browser-add-repo")?.addEventListener("click", () => vmBrowserApply(true));
+  // Hide Browse button initially (only local host selected by default)
+  el("btn-browse-cwd")?.style && (el("btn-browse-cwd").style.display = "none");
 
   // Approval modal
   el("appr-allow").addEventListener("click", () => resolveApproval("allow"));
@@ -1783,7 +2542,7 @@ function wireStaticListeners() {
   el("btn-refresh-history").addEventListener("click", loadAndRenderHistory);
 
   // WSL refresh
-  el("btn-refresh-wsl").addEventListener("click", loadAndRenderWsl);
+  el("btn-refresh-vms")?.addEventListener("click", () => { vmData = null; loadAndRenderVMs(); });
 
   // Commands filter
   el("cmd-filter").addEventListener("input", (e) => {
@@ -1833,10 +2592,14 @@ function restoreSidebarWidth() {
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
-  // Resolve orchestrator port from the main process (Electron) or fall back to default
+  // Resolve orchestrator port and settings from the main process
   if (window.fleetApp) {
     try { PORT = (await window.fleetApp.getPort()) || 4318; } catch { PORT = 4318; }
     BASE = `http://127.0.0.1:${PORT}`;
+    try {
+      const s = await window.fleetApp.getSettings();
+      if (s) applySettings(s);
+    } catch { /* ignore */ }
   }
 
   restoreSidebarWidth();

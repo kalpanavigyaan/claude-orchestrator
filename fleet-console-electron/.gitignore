@@ -4,3 +4,4 @@ dist/
 *.tmp
 cdp-*.cjs
 cdp-*.mjs
+settings.user.json

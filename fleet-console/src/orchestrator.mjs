@@ -206,6 +206,7 @@ function sessionSummary(s) {
     toolServer: s.toolServer != null ? !!s.toolServer : !!(s.runnerConfig && s.runnerConfig.toolServerUrl),
     tools: Array.isArray(s.tools) ? s.tools : DEFAULT_INTEL_TOOLS,
     additionalDirectories: Array.isArray(s.additionalDirectories) ? s.additionalDirectories : [],
+    directoryAccess: s.directoryAccess && typeof s.directoryAccess === "object" ? s.directoryAccess : {},
     policy: s.policy,
     status: s.status,
     resetAt: s.resetAt,
@@ -366,6 +367,8 @@ function sessionRecordObject(s) {
     browser: !!s.browser,
     toolServer: !!s.toolServer,
     tools: Array.isArray(s.tools) ? s.tools : DEFAULT_INTEL_TOOLS,
+    additionalDirectories: Array.isArray(s.additionalDirectories) ? s.additionalDirectories : [],
+    directoryAccess: s.directoryAccess && typeof s.directoryAccess === "object" ? s.directoryAccess : {},
     sdkSessionId: s.sdkSessionId || null,
     status: s.status,
     createdAt: new Date(s.createdAt).toISOString(),
@@ -752,6 +755,32 @@ function deliverUserText(s, text) {
 }
 
 /**
+ * Normalize a directories payload (array of strings or {path, access}) into a clean list of
+ * { path, access } with access ∈ {"read","write"} (default "write").
+ */
+function normalizeDirectories(items) {
+  return (Array.isArray(items) ? items : [])
+    .map((d) => (typeof d === "string"
+      ? { path: d.trim(), access: "write" }
+      : { path: String(d?.path || "").trim(), access: d?.access === "read" ? "read" : "write" }))
+    .filter((d) => d.path);
+}
+
+/** Human-readable directory-access policy injected into the conversation so Claude honors read-only dirs. */
+function buildDirectoryPolicyMessage(items, cwd) {
+  const writable = items.filter((d) => d.access === "write").map((d) => d.path);
+  const readonly = items.filter((d) => d.access === "read").map((d) => d.path);
+  const lines = [
+    "Directory access policy update for this session:",
+    `- Working directory: ${cwd || "(unchanged)"}`,
+    `- Read-write (you may create, edit, and delete files here): ${writable.length ? writable.join(", ") : "(only the working directory)"}`,
+    `- Read-only (reference only — do NOT create, edit, or delete files here): ${readonly.length ? readonly.join(", ") : "(none)"}`,
+    "Respect this policy for the remainder of the session.",
+  ];
+  return lines.join("\n");
+}
+
+/**
  * Run a command and capture stdout, never rejecting (resolves { ok, out, err }).
  * `encoding` is needed because `wsl.exe --list` emits UTF-16LE.
  */
@@ -800,28 +829,36 @@ async function listWslDistros() {
     .filter(Boolean);
 }
 
-/** List WSL distributions with their running state via `wsl --list --verbose`. */
+/**
+ * List WSL distributions with their running state. Running state is taken from
+ * `wsl --list --running --quiet` (distro NAMES only) rather than the localized STATE column of
+ * `--list --verbose`, so non-English Windows can't mislabel a running distro as stopped. `state`
+ * is normalized to canonical "Running"/"Stopped" for downstream /running/i checks.
+ */
 async function listWslDistrosVerbose() {
+  const run = await runCapture("wsl.exe", ["--list", "--running", "--quiet"], { encoding: "utf16le" });
+  const runningSet = new Set(
+    run.out.split(/\r?\n/).map((s) => s.replace(/\x00/g, "").trim()).filter(Boolean)
+  );
   const r = await runCapture("wsl.exe", ["--list", "--verbose"], { encoding: "utf16le" });
   const lines = r.out
     .split(/\r?\n/)
     .map((l) => l.replace(/\x00/g, "").trim())
     .filter(Boolean);
   const distros = [];
-  for (const line of lines) {
-    if (/^\s*NAME\s+STATE/i.test(line)) {
-      continue; // header row
-    }
-    const isDefault = /^\s*\*/.test(line);
-    const parts = line.replace(/^\s*\*?\s*/, "").trim().split(/\s+/);
-    if (parts.length >= 2) {
-      distros.push({
-        name: parts[0],
-        state: parts[1],
-        version: parts[2] || "",
-        default: isDefault,
-      });
-    }
+  // The first non-empty line is always the (possibly localized) header — skip by index.
+  for (let i = 1; i < lines.length; i++) {
+    const isDefault = /^\s*\*/.test(lines[i]);
+    const parts = lines[i].replace(/^\s*\*?\s*/, "").trim().split(/\s+/);
+    if (!parts[0]) continue;
+    const name = parts[0];
+    const last = parts[parts.length - 1] || "";
+    distros.push({
+      name,
+      state: runningSet.has(name) ? "Running" : "Stopped",
+      version: /^\d+$/.test(last) ? last : "",
+      default: isDefault,
+    });
   }
   return distros;
 }
@@ -934,6 +971,9 @@ async function computeRepos() {
   const distros = await listWslDistrosVerbose();
   for (const d of distros) {
     if (!/running/i.test(d.state)) {
+      // Don't auto-start every stopped distro just to render the panel — expose it as a
+      // lazily-loadable group the user can expand on demand (via /api/wsl/repos).
+      groups.push({ host: "wsl", distro: d.name, label: d.name, repos: [], stopped: true });
       continue;
     }
     const repos = await wslRepoStatuses(d.name);
@@ -1151,6 +1191,10 @@ function createSession(spec) {
       ...(Array.isArray(spec.additionalDirectories) ? spec.additionalDirectories : []),
       agentInstructionsDir,
     ],
+    // Read-only subset (from the access map) — enforced on edit tools in the runner's canUseTool.
+    readonlyDirectories: spec.directoryAccess && typeof spec.directoryAccess === "object"
+      ? Object.entries(spec.directoryAccess).filter(([, a]) => a === "read").map(([p]) => p)
+      : [],
     initialPrompt: spec.initialPrompt || "",
     systemPromptAppend: autonomyNote + instructionsNote,
     maxTurns: maxTurns,
@@ -1187,6 +1231,11 @@ function createSession(spec) {
     tools,
     policy,
     additionalDirectories: Array.isArray(spec.additionalDirectories) ? spec.additionalDirectories.slice() : [],
+    // Per-directory access policy (path → "read" | "write"). New dirs default to write/edit;
+    // read-only is enforced soft (an injected policy message) and hard (canUseTool in the runner).
+    directoryAccess: (spec.directoryAccess && typeof spec.directoryAccess === "object")
+      ? { ...spec.directoryAccess }
+      : Object.fromEntries((Array.isArray(spec.additionalDirectories) ? spec.additionalDirectories : []).map((d) => [String(d), "write"])),
     autoContinue: spec.autoContinue !== false,
     status: "starting",
     ready: false,
@@ -1274,6 +1323,8 @@ function resumeSession(rel) {
     browser: meta.browser != null ? meta.browser : undefined,
     toolServer: meta.toolServer != null ? meta.toolServer : undefined,
     tools: Array.isArray(meta.tools) ? meta.tools : undefined,
+    additionalDirectories: Array.isArray(meta.additionalDirectories) ? meta.additionalDirectories : undefined,
+    directoryAccess: (meta.directoryAccess && typeof meta.directoryAccess === "object") ? meta.directoryAccess : undefined,
     sessionDirOverride: dir,
     preload,
     sdkSessionId: meta.sdkSessionId || null,
@@ -1879,14 +1930,56 @@ const server = http.createServer(async (req, res) => {
       const ok = writeToRunner(s, { type: "set_tools", tools });
       sendJson(res, 200, { ok });
     } else if (verb === "set-directories") {
-      // Add/remove extra directories Claude can access in this session.
-      // agentInstructionsDir is always appended so instruction files remain accessible.
-      const dirs = Array.isArray(body.directories) ? body.directories.map(String).filter(Boolean) : [];
-      s.additionalDirectories = dirs;
-      s.runnerConfig.additionalDirectories = [...dirs, s.agentInstructionsDir];
+      // Add/remove extra directories Claude can access, each marked read-write or read-only.
+      // agentInstructionsDir is always appended (and never read-only) so instruction files stay usable.
+      const items = normalizeDirectories(body.directories);
+      const paths = items.map((d) => d.path);
+      const readonly = items.filter((d) => d.access === "read").map((d) => d.path);
+      s.additionalDirectories = paths;
+      s.directoryAccess = Object.fromEntries(items.map((d) => [d.path, d.access]));
+      s.runnerConfig.additionalDirectories = [...paths, s.agentInstructionsDir];
+      s.runnerConfig.readonlyDirectories = readonly;
       s.dirty = true;
-      const ok = writeToRunner(s, { type: "set_directories", directories: [...dirs, s.agentInstructionsDir] });
+      // Live update: grant SDK access to all paths; enforce read-only on edit tools (canUseTool).
+      const ok = writeToRunner(s, {
+        type: "set_directories",
+        directories: [...paths, s.agentInstructionsDir],
+        readonly,
+      });
+      // Soft enforcement: tell Claude the policy so it honors read-only dirs in commands/reasoning.
+      if (body.inject) {
+        const text = buildDirectoryPolicyMessage(items, s.cwd);
+        recordMessage(s, { role: "user", text });
+        deliverUserText(s, text);
+      }
       sendJson(res, 200, { ok });
+    } else if (verb === "set-cwd") {
+      // Switch the working directory of a LIVE session without losing the conversation. The Agent
+      // SDK has no live cwd switch, and resuming under a new cwd would lose context (transcripts are
+      // keyed by project dir), so instead we (a) make the new dir accessible to the agent and (b)
+      // inject an instruction to treat it as the working directory. The conversation stays intact.
+      const newCwd = String(body.cwd || "").trim();
+      if (!newCwd) { sendJson(res, 400, { ok: false, reason: "cwd is required" }); return; }
+      const prev = s.cwd;
+      s.cwd = newCwd;
+      if (!s.additionalDirectories.includes(newCwd)) {
+        s.additionalDirectories = [...s.additionalDirectories, newCwd];
+        s.directoryAccess = { ...s.directoryAccess, [newCwd]: "write" };
+      }
+      const readonly = Object.entries(s.directoryAccess).filter(([, a]) => a === "read").map(([p]) => p);
+      s.runnerConfig.cwd = newCwd; // future fresh spawns (no resume) start here
+      s.runnerConfig.additionalDirectories = [...s.additionalDirectories, s.agentInstructionsDir];
+      s.runnerConfig.readonlyDirectories = readonly;
+      s.dirty = true;
+      // Grant access to the new dir on the live runner, then tell Claude to work there.
+      writeToRunner(s, { type: "set_directories", directories: [...s.additionalDirectories, s.agentInstructionsDir], readonly });
+      const text =
+        `Change your working directory to: ${newCwd}\n` +
+        `Run shell commands from there (start with \`cd "${newCwd}"\`) and treat it as the project root; ` +
+        `resolve relative paths against it. (Previous working directory: ${prev}.)`;
+      recordMessage(s, { role: "user", text });
+      const r = deliverUserText(s, text);
+      sendJson(res, 200, { ok: r.alive });
     } else if (verb === "set-model") {
       const model = body.model ? String(body.model) : null;
       s.model = model; // optimistic; runner echoes back a "model" event on success

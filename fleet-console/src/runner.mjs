@@ -70,6 +70,23 @@ const EDIT_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit", "Updat
 const READ_TOOLS = new Set(["Read", "Grep", "Glob", "LS", "NotebookRead", "TodoWrite"]);
 const SHELL_TOOLS = new Set(["Bash", "BashOutput", "KillShell", "KillBash"]);
 
+// Directories marked read-only for this session. The SDK has no per-directory write control, so we
+// hard-enforce it here: an edit tool targeting a path under a read-only dir is denied. (The soft side
+// is a policy message injected into the conversation by the orchestrator.) Live-updatable.
+let readonlyDirs = Array.isArray(config.readonlyDirectories) ? config.readonlyDirectories.slice() : [];
+const normPath = (x) => String(x || "").replace(/\\/g, "/").replace(/\/+$/, "");
+/** True if `p` (resolved against cwd if relative) is inside any read-only directory. */
+function underReadonlyDir(p) {
+  if (!p || !readonlyDirs.length) return false;
+  let target = normPath(p);
+  if (!/^([a-zA-Z]:\/|\/)/.test(target)) target = normPath(config.cwd || "") + "/" + target; // resolve relative
+  return readonlyDirs.some((d) => { const dd = normPath(d); return dd && (target === dd || target.startsWith(dd + "/")); });
+}
+/** The filesystem path an edit tool would write to, if discernible from its input. */
+function editTargetPath(input) {
+  return input && (input.file_path || input.path || input.notebook_path || input.notebookPath) || null;
+}
+
 /** Category for a tool: read (always allowed), edits, shell (bash/git/…), or other. */
 function toolCategory(name) {
   if (READ_TOOLS.has(name)) return "read";
@@ -236,6 +253,13 @@ async function canUseTool(toolName, input) {
       return { behavior: "deny", message: `Tool '${id}' is disabled for this session.` };
     }
   }
+  // Hard-enforce per-directory read-only: block an edit tool whose target is inside a read-only dir.
+  if (EDIT_TOOLS.has(toolName)) {
+    const tgt = editTargetPath(input);
+    if (tgt && underReadonlyDir(tgt)) {
+      return { behavior: "deny", message: `'${tgt}' is in a read-only directory for this session — edits there are not allowed.` };
+    }
+  }
   // Auto-approve read-only tools and any category the user has toggled on; otherwise prompt.
   // `updatedInput` must be echoed — the SDK uses it as the input to actually run the tool.
   const cat = toolCategory(toolName);
@@ -327,6 +351,9 @@ rl.on("line", (line) => {
       // method isn't available (older SDK), update config so the next runner restart picks it up.
       const dirs = Array.isArray(cmd.directories) ? cmd.directories : [];
       config.additionalDirectories = dirs;
+      // Read-only subset — enforced on edit tools in canUseTool (effective from the next tool call).
+      readonlyDirs = Array.isArray(cmd.readonly) ? cmd.readonly.slice() : [];
+      config.readonlyDirectories = readonlyDirs;
       if (sdkSession && typeof sdkSession.setAdditionalDirectories === "function") {
         sdkSession
           .setAdditionalDirectories(dirs)
