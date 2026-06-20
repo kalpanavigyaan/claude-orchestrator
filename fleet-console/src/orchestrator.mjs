@@ -216,6 +216,7 @@ function sessionSummary(s) {
     lastContinueAt: s.lastContinueAt,
     autoContinue: s.autoContinue,
     autoRetryApiError: s.autoRetryApiError,
+    messageQueue: s.messageQueue ?? [],
     pendingApprovals: [...s.pendingApprovals.values()],
     lastResult: s.lastResult || null,
     createdAt: s.createdAt,
@@ -1243,6 +1244,7 @@ function createSession(spec) {
       : Object.fromEntries((Array.isArray(spec.additionalDirectories) ? spec.additionalDirectories : []).map((d) => [String(d), "read"])),
     autoContinue: spec.autoContinue !== false,
     autoRetryApiError: spec.autoRetryApiError !== false,
+    messageQueue: Array.isArray(spec.messageQueue) ? spec.messageQueue.slice() : [],
     status: "starting",
     ready: false,
     resetAt: null,
@@ -1438,6 +1440,12 @@ function handleRunnerEvent(s, event) {
       } else if (event.status === "idle") {
         s.status = "idle";
         s.activity = null;
+        // Deliver next queued instruction if one is waiting
+        if (s.messageQueue && s.messageQueue.length > 0 && runnerAlive(s)) {
+          const next = s.messageQueue.shift();
+          recordMessage(s, { role: "system", text: `queue: delivering next instruction (${s.messageQueue.length} remaining)` });
+          deliverUserText(s, next);
+        }
       } else if (event.status === "error") {
         s.status = "error";
         s.activity = null;
@@ -2124,6 +2132,30 @@ const server = http.createServer(async (req, res) => {
     } else if (verb === "auto-retry-api-error") {
       s.autoRetryApiError = body.enabled !== false;
       sendJson(res, 200, { ok: true });
+    } else if (verb === "queue-add") {
+      const text = String(body.text || "").trim();
+      if (!text) { sendJson(res, 400, { ok: false, reason: "text is required" }); return; }
+      if (!s.messageQueue) s.messageQueue = [];
+      s.messageQueue.push(text);
+      sendJson(res, 200, { ok: true, queue: s.messageQueue });
+    } else if (verb === "queue-remove") {
+      const idx = Number(body.index);
+      if (!s.messageQueue || idx < 0 || idx >= s.messageQueue.length) {
+        sendJson(res, 400, { ok: false, reason: "invalid index" }); return;
+      }
+      s.messageQueue.splice(idx, 1);
+      sendJson(res, 200, { ok: true, queue: s.messageQueue });
+    } else if (verb === "queue-clear") {
+      s.messageQueue = [];
+      sendJson(res, 200, { ok: true });
+    } else if (verb === "queue-move") {
+      // Reorder: move item from index `from` to `to`
+      const { from, to } = body;
+      if (s.messageQueue && from >= 0 && to >= 0 && from < s.messageQueue.length && to < s.messageQueue.length) {
+        const [item] = s.messageQueue.splice(from, 1);
+        s.messageQueue.splice(to, 0, item);
+      }
+      sendJson(res, 200, { ok: true, queue: s.messageQueue ?? [] });
     } else if (verb === "rename") {
       const newLabel = String(body.label || "").trim();
       if (!newLabel) { sendJson(res, 400, { ok: false, reason: "label is required" }); return; }

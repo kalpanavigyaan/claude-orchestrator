@@ -20,6 +20,13 @@ const STATUS_DOT: Record<string, string> = {
   ended:    '#6b7280',
 };
 
+// Label suffix for special states
+function statusSuffix(s: Session): string {
+  if (s.status === 'limited') return ' ⏸';
+  if (s.status === 'error') return ' ✕';
+  return '';
+}
+
 interface Props {
   sessions: Session[];
   tabOrder: string[];
@@ -40,10 +47,15 @@ export default function SessionTabBar({
     <div style={{
       display: 'flex', alignItems: 'stretch',
       background: 'var(--tab-strip)',
-      borderBottom: '1px solid var(--border)',
+      borderBottom: '2px solid var(--border)',
       overflowX: 'auto', flexShrink: 0,
       minHeight: 34,
     }}>
+      {tabOrder.length === 0 && (
+        <div style={{ padding: '0 12px', fontSize: 11, color: 'var(--muted)', display: 'flex', alignItems: 'center', fontStyle: 'italic' }}>
+          No open tabs — select a session or create one
+        </div>
+      )}
       {tabOrder.map(id => {
         const s = sessMap[id];
         if (!s) return null;
@@ -72,10 +84,11 @@ export default function SessionTabBar({
               width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
               background: STATUS_DOT[s.status] ?? '#6b7280',
               boxShadow: s.status === 'running' ? `0 0 5px ${STATUS_DOT.running}` : 'none',
+              animation: s.status === 'limited' ? 'fc-dot-pulse 1.5s infinite ease-in-out' : 'none',
             }} />
             {/* Label */}
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-              {s.label}
+              {s.label}{statusSuffix(s)}
             </span>
             {/* Close */}
             <button

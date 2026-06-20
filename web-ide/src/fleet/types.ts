@@ -3,7 +3,7 @@
 export interface Session {
   id: string;
   label: string;
-  status: 'idle' | 'starting' | 'running' | 'error' | 'ended';
+  status: 'idle' | 'starting' | 'running' | 'error' | 'ended' | 'limited';
   host: string;
   distro?: string;
   cwd?: string;
@@ -17,6 +17,9 @@ export interface Session {
   toolServer?: boolean;
   tools?: string[];
   additionalDirectories?: string[];
+  resetAt?: number;
+  nextContinueAt?: number;
+  messageQueue?: string[];
   lastResult?: {
     cost?: number;
     usage?: { input_tokens: number; output_tokens: number };
@@ -110,5 +113,5 @@ export interface VM {
   distro?: string;
 }
 
-export type RightPanel = 'usage' | 'vms' | 'intelligence' | 'commands' | 'repos' | 'directories';
+export type RightPanel = 'usage' | 'vms' | 'intelligence' | 'commands' | 'repos' | 'directories' | 'queue';
 export type UsageTab = 'overview' | 'daily' | 'monthly' | 'models' | 'sessions-hist' | 'scatter';

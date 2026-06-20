@@ -24,6 +24,7 @@ import IntelligencePanel from './IntelligencePanel';
 import CommandsPanel    from './CommandsPanel';
 import ReposPanel       from './ReposPanel';
 import DirectoriesPanel from './DirectoriesPanel';
+import QueuePanel       from './QueuePanel';
 import VMsPanel         from './VMsPanel';
 import RightActivityBar from './RightActivityBar';
 import NewSessionModal   from './NewSessionModal';
@@ -52,6 +53,7 @@ const PANEL_ACCENT: Record<RightPanel, string> = {
   commands:     '#61afef',  // blue
   repos:        '#e5c07b',  // gold
   directories:  '#56b6c2',  // cyan
+  queue:        '#f97316',  // orange
 };
 
 const LS_SIDEBAR_W   = 'fleet-sidebar-w';
@@ -129,12 +131,15 @@ export function FleetConsole({ onSwitchToEditor }: { onSwitchToEditor?: () => vo
         });
         setFleetState(d);
         setConnected(true);
-        // Auto-add new sessions to tab bar; remove ended/stopped sessions
+        // Auto-add new sessions to tab bar; only remove tabs for sessions fully gone from orchestrator.
+        // Keep ended sessions in tabs so user can see the result — closed by X or by session disappearing.
         setTabOrder(prev => {
-          const ids = new Set((d.sessions ?? []).filter(s => s.status !== 'ended').map(s => s.id));
-          const kept = prev.filter(id => ids.has(id));
-          const added = [...ids].filter(id => !prev.includes(id));
-          return added.length || kept.length !== prev.length ? [...kept, ...added] : prev;
+          const allIds = new Set((d.sessions ?? []).map(s => s.id));
+          const kept = prev.filter(id => allIds.has(id)); // keep tabs for sessions still in orchestrator
+          const newIds = (d.sessions ?? [])
+            .filter(s => s.status !== 'ended' && !prev.includes(s.id))
+            .map(s => s.id);
+          return newIds.length || kept.length !== prev.length ? [...kept, ...newIds] : prev;
         });
       }, () => {
         setConnected(false);
@@ -180,6 +185,8 @@ export function FleetConsole({ onSwitchToEditor }: { onSwitchToEditor?: () => vo
   function handleTabSelect(id: string) {
     setSelectedId(id);
     setViewingHistRel(null);
+    // Ensure tab exists (e.g. selected from sidebar)
+    setTabOrder(prev => prev.includes(id) ? prev : [...prev, id]);
     if (focusedPane === 'sec' && splitLayout !== 'single') {
       setSecSession(id);
     } else {
@@ -405,7 +412,7 @@ export function FleetConsole({ onSwitchToEditor }: { onSwitchToEditor?: () => vo
               <SessionsPane
                 sessions={sessionsWithOverrides}
                 selectedId={selectedId}
-                onSelect={(id) => { setSelectedId(id); setViewingHistRel(null); }}
+                onSelect={(id) => { handleTabSelect(id); }}
                 resetAt={fleetState?.account?.resetAt}
                 onRename={handleRenameSession}
               />
@@ -473,7 +480,8 @@ export function FleetConsole({ onSwitchToEditor }: { onSwitchToEditor?: () => vo
 
             {/* Main pane */}
             <div
-              style={{ position: 'relative', flex: splitLayout === 'single' ? 1 : undefined,
+              style={{ position: 'relative', display: 'flex', flexDirection: 'column',
+                flex: splitLayout === 'single' ? 1 : undefined,
                 flexBasis: splitLayout !== 'single' ? `${splitRatio * 100}%` : undefined,
                 overflow: 'hidden', minWidth: 0, minHeight: 0,
                 outline: focusedPane === 'main' && splitLayout !== 'single' ? '1px solid var(--accent)' : 'none',
@@ -511,7 +519,8 @@ export function FleetConsole({ onSwitchToEditor }: { onSwitchToEditor?: () => vo
             {/* Secondary pane */}
             {splitLayout !== 'single' && (
               <div
-                style={{ position: 'relative', flex: 1, overflow: 'hidden', minWidth: 0, minHeight: 0,
+                style={{ position: 'relative', display: 'flex', flexDirection: 'column',
+                  flex: 1, overflow: 'hidden', minWidth: 0, minHeight: 0,
                   outline: focusedPane === 'sec' ? '1px solid var(--accent)' : 'none',
                   borderTop: splitLayout === 'v-split' ? '1px solid var(--border)' : 'none',
                   borderLeft: splitLayout === 'h-split' ? '1px solid var(--border)' : 'none',
@@ -557,6 +566,7 @@ export function FleetConsole({ onSwitchToEditor }: { onSwitchToEditor?: () => vo
             {rightPanel === 'commands' && 'Commands'}
             {rightPanel === 'repos' && 'Repositories'}
             {rightPanel === 'directories' && 'Directories'}
+            {rightPanel === 'queue' && 'Instruction Queue'}
           </div>
 
           <div style={{ flex: 1, overflow: 'auto' }}>
@@ -581,6 +591,9 @@ export function FleetConsole({ onSwitchToEditor }: { onSwitchToEditor?: () => vo
             )}
             {rightPanel === 'directories' && (
               <DirectoriesPanel session={selectedSession} />
+            )}
+            {rightPanel === 'queue' && (
+              <QueuePanel session={selectedSession} />
             )}
             {rightPanel === 'vms' && <VMsPanel />}
           </div>

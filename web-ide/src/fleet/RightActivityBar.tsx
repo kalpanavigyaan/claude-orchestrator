@@ -1,5 +1,5 @@
 import React from 'react';
-import { BarChart2, Monitor, Cpu, Terminal, GitBranch, Folder } from 'lucide-react';
+import { BarChart2, Monitor, Cpu, Terminal, GitBranch, Folder, ListOrdered } from 'lucide-react';
 import type { RightPanel } from './types';
 
 interface Props {
@@ -8,12 +8,13 @@ interface Props {
 }
 
 const BUTTONS: { panel: RightPanel; icon: React.ReactNode; title: string; color: string }[] = [
-  { panel: 'usage',        icon: <BarChart2 size={20} strokeWidth={1.5} />, title: 'Usage Statistics',      color: '#4ade80' },
-  { panel: 'vms',          icon: <Monitor   size={20} strokeWidth={1.5} />, title: 'Virtual Machines (WSL)', color: '#fbbf24' },
-  { panel: 'intelligence', icon: <Cpu       size={20} strokeWidth={1.5} />, title: 'Intelligence Tools',     color: '#c678dd' },
-  { panel: 'commands',     icon: <Terminal  size={20} strokeWidth={1.5} />, title: 'Slash Commands',         color: '#61afef' },
-  { panel: 'repos',        icon: <GitBranch size={20} strokeWidth={1.5} />, title: 'Repositories',           color: '#e5c07b' },
-  { panel: 'directories',  icon: <Folder    size={20} strokeWidth={1.5} />, title: 'Directories',            color: '#56b6c2' },
+  { panel: 'usage',        icon: <BarChart2    size={20} strokeWidth={1.5} />, title: 'Usage Statistics',       color: '#4ade80' },
+  { panel: 'vms',          icon: <Monitor      size={20} strokeWidth={1.5} />, title: 'Virtual Machines (WSL)',  color: '#fbbf24' },
+  { panel: 'intelligence', icon: <Cpu          size={20} strokeWidth={1.5} />, title: 'Intelligence Tools',      color: '#c678dd' },
+  { panel: 'commands',     icon: <Terminal     size={20} strokeWidth={1.5} />, title: 'Slash Commands',          color: '#61afef' },
+  { panel: 'repos',        icon: <GitBranch    size={20} strokeWidth={1.5} />, title: 'Repositories',            color: '#e5c07b' },
+  { panel: 'directories',  icon: <Folder       size={20} strokeWidth={1.5} />, title: 'Directories',             color: '#56b6c2' },
+  { panel: 'queue',        icon: <ListOrdered  size={20} strokeWidth={1.5} />, title: 'Instruction Queue',       color: '#f97316' },
 ];
 
 export default function RightActivityBar({ activePanel, onPanelChange }: Props) {

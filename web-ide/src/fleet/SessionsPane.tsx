@@ -14,6 +14,7 @@ const STATUS_COLOR: Record<string, string> = {
   running:  '#4ade80',
   starting: '#fbbf24',
   error:    '#f87171',
+  limited:  '#fbbf24',
   idle:     '#6a737d',
   ended:    '#6a737d',
 };
@@ -208,6 +209,12 @@ export default function SessionsPane({ sessions, selectedId, onSelect, resetAt, 
                       <ElapsedTimer startMs={startMs} />
                     </span>
                   )}
+                  {/* Waiting-for-reset countdown */}
+                  {s.status === 'limited' && s.resetAt != null && (
+                    <span style={{ fontSize: 10, fontFamily: 'monospace', color: '#fbbf24', flexShrink: 0 }} title="Waiting for account reset">
+                      ⏸ <Countdown targetMs={s.resetAt} />
+                    </span>
+                  )}
                 </div>
 
                 {/* Row 2: host · distro · repo · status badge */}
@@ -218,7 +225,7 @@ export default function SessionsPane({ sessions, selectedId, onSelect, resetAt, 
                   <span style={{ color: hostColor, fontWeight: 600 }}>{s.host}</span>
                   {s.distro && <span style={{ color: '#9cdcfe', opacity: 0.8 }}>· {s.distro}</span>}
                   {repo && <span style={{ color: 'var(--muted)' }}>· {repo}</span>}
-                  {s.status !== 'idle' && s.status !== 'ended' && (
+                  {s.status !== 'idle' && s.status !== 'ended' && s.status !== 'limited' && (
                     <span style={{
                       marginLeft: 'auto', fontSize: 9, padding: '1px 5px', borderRadius: 3, flexShrink: 0,
                       background: s.status === 'running' ? 'rgba(74,222,128,.15)'
@@ -227,6 +234,11 @@ export default function SessionsPane({ sessions, selectedId, onSelect, resetAt, 
                       color: dotColor,
                     }}>
                       {s.status}
+                    </span>
+                  )}
+                  {s.status === 'limited' && (
+                    <span style={{ marginLeft: 'auto', fontSize: 9, padding: '1px 5px', borderRadius: 3, flexShrink: 0, background: 'rgba(251,191,36,.15)', color: '#fbbf24' }}>
+                      waiting for reset
                     </span>
                   )}
                 </div>
