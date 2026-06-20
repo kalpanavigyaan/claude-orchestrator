@@ -1,0 +1,412 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Fleet Console — Shared UI Theme
+   Single source of truth for BOTH the Electron app and the React web app.
+
+   HOW TO USE:
+     Electron:  @import './fleet-theme.css';   (in renderer/styles.css)
+     React:     @import '../../fleet-console-electron/renderer/fleet-theme.css';
+                (in web-ide/src/index.css via Vite CSS processing)
+
+   Any colour / token change made here automatically updates BOTH apps.
+   Do NOT duplicate these variables in app-specific CSS files.
+══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Reset (safe to include in both contexts) ───────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+/* ════════════════════════════════════════════════════════════════════════
+   DARK THEME  (default)
+════════════════════════════════════════════════════════════════════════ */
+:root {
+
+  /* ── Title bar ─────────────────────────────────────────────────────── */
+  --fleet-titlebar-bg:    #3c3c3c;
+  --fleet-titlebar-fg:    #cccccc;
+
+  /* ── Activity bar ─────────────────────────────────────────────────── */
+  --fleet-ab-bg:          #333333;
+  --fleet-ab-fg:          rgba(255,255,255,.4);
+  --fleet-ab-fg-active:   #ffffff;
+  --fleet-ab-border:      #2c2c2c;
+
+  /* ── Sidebar ───────────────────────────────────────────────────────── */
+  --fleet-sb-bg:          #252526;
+  --fleet-sb-fg:          #cccccc;
+  --fleet-sb-border:      #3c3c3c;
+  --fleet-sb-hdr-fg:      #bbbbbb;
+  --fleet-sb-hover:       #2a2d2e;
+  --fleet-sb-active:      #37373d;
+  --fleet-sb-focus:       #094771;
+
+  /* ── Editor / main area ────────────────────────────────────────────── */
+  --fleet-ed-bg:          #1e1e1e;
+  --fleet-ed-fg:          #d4d4d4;
+
+  /* ── Tab strip ─────────────────────────────────────────────────────── */
+  --fleet-tab-strip:      #2d2d2d;
+  --fleet-tab-active:     #1e1e1e;
+  --fleet-tab-inactive:   #2d2d2d;
+  --fleet-tab-border:     #252526;
+  --fleet-tab-top:        #007acc;
+  --fleet-tab-fg:         #969696;
+  --fleet-tab-fg-active:  #ffffff;
+
+  /* ── Status bar ────────────────────────────────────────────────────── */
+  --fleet-status-bg:      #007acc;
+  --fleet-status-fg:      #ffffff;
+
+  /* ── Inputs ─────────────────────────────────────────────────────────── */
+  --fleet-in-bg:          #3c3c3c;
+  --fleet-in-border:      #555555;
+  --fleet-in-fg:          #cccccc;
+  --fleet-in-focus:       #007fd4;
+  --fleet-in-placeholder: #888888;
+
+  /* ── Buttons ────────────────────────────────────────────────────────── */
+  --fleet-btn-bg:         #0e639c;
+  --fleet-btn-fg:         #ffffff;
+  --fleet-btn-hover:      #1177bb;
+  --fleet-btn-2nd:        #3a3d41;
+
+  /* ── Misc ───────────────────────────────────────────────────────────── */
+  --fleet-border:         #3c3c3c;
+  --fleet-border-light:   #474747;
+  --fleet-focus-border:   #007fd4;
+  --fleet-accent:         #007acc;
+  --fleet-muted:          #6a737d;
+
+  /* ── Semantic colours ───────────────────────────────────────────────── */
+  --fleet-green:          #4ade80;
+  --fleet-red:            #f87171;
+  --fleet-amber:          #fbbf24;
+  --fleet-cyan:           #9cdcfe;
+  --fleet-blue:           #4ec9b0;
+  --fleet-purple:         #c678dd;
+  --fleet-gold:           #e5c07b;
+
+  /* ── Code token colours ─────────────────────────────────────────────── */
+  --fleet-tok-comment:    #6a9955;
+  --fleet-tok-keyword:    #569cd6;
+  --fleet-tok-string:     #ce9178;
+  --fleet-tok-num:        #b5cea8;
+  --fleet-tok-type:       #4ec9b0;
+  --fleet-tok-key:        #9cdcfe;
+
+  /* ── Markdown chat colours ──────────────────────────────────────────── */
+  --fleet-md-bold:        #e5c07b;
+  --fleet-md-italic:      #c586c0;
+  --fleet-md-code-bg:     rgba(229,192,123,.12);
+  --fleet-md-code-fg:     #e06c75;
+  --fleet-md-h1:          #e5c07b;
+  --fleet-md-h2:          #61afef;
+  --fleet-md-h3:          #98c379;
+  --fleet-md-h4:          #c678dd;
+
+  /* ─────────────────────────────────────────────────────────────────────
+     BACKWARD-COMPAT ALIASES — Electron app uses --vsc-*, React uses short names.
+     These allow existing code in both apps to keep working without a big
+     rename refactor. New code should use --fleet-* names.
+  ─────────────────────────────────────────────────────────────────────── */
+
+  /* Electron --vsc-* aliases */
+  --vsc-titlebar-bg:      var(--fleet-titlebar-bg);
+  --vsc-titlebar-fg:      var(--fleet-titlebar-fg);
+  --vsc-ab-bg:            var(--fleet-ab-bg);
+  --vsc-ab-fg:            var(--fleet-ab-fg);
+  --vsc-ab-fg-active:     var(--fleet-ab-fg-active);
+  --vsc-ab-border:        var(--fleet-ab-border);
+  --vsc-sb-bg:            var(--fleet-sb-bg);
+  --vsc-sb-fg:            var(--fleet-sb-fg);
+  --vsc-sb-border:        var(--fleet-sb-border);
+  --vsc-editor-bg:        var(--fleet-ed-bg);
+  --vsc-editor-fg:        var(--fleet-ed-fg);
+  --vsc-statusbar-bg:     var(--fleet-status-bg);
+  --vsc-statusbar-fg:     var(--fleet-status-fg);
+  --vsc-input-bg:         var(--fleet-in-bg);
+  --vsc-input-border:     var(--fleet-in-border);
+  --vsc-input-fg:         var(--fleet-in-fg);
+  --vsc-list-hover:       var(--fleet-sb-hover);
+  --vsc-list-active:      var(--fleet-sb-focus);
+  --vsc-list-active-fg:   #ffffff;
+  --vsc-button-bg:        var(--fleet-btn-bg);
+  --vsc-button-fg:        var(--fleet-btn-fg);
+  --vsc-button-hover:     var(--fleet-btn-hover);
+  --vsc-border:           var(--fleet-border);
+  --vsc-focus-border:     var(--fleet-focus-border);
+  --vsc-green:            var(--fleet-green);
+  --vsc-red:              var(--fleet-red);
+  --vsc-amber:            var(--fleet-amber);
+  --vsc-blue:             var(--fleet-blue);
+  --vsc-accent:           var(--fleet-accent);
+  --vsc-muted:            var(--fleet-muted);
+  --vsc-panel-header:     var(--fleet-sb-hdr-fg);
+  --tok-comment:          var(--fleet-tok-comment);
+  --tok-keyword:          var(--fleet-tok-keyword);
+  --tok-string:           var(--fleet-tok-string);
+  --tok-num:              var(--fleet-tok-num);
+  --tok-key:              var(--fleet-tok-key);
+  --tok-bool:             var(--fleet-tok-keyword);
+  --tok-plain:            var(--fleet-ed-fg);
+  --tok-punct:            var(--fleet-ed-fg);
+  --md-bold:              var(--fleet-md-bold);
+  --md-italic:            var(--fleet-md-italic);
+  --md-bolditalic:        var(--fleet-cyan);
+
+  /* React short-name aliases */
+  --tb-bg:                var(--fleet-titlebar-bg);
+  --tb-fg:                var(--fleet-titlebar-fg);
+  --ab-bg:                var(--fleet-ab-bg);
+  --ab-fg:                var(--fleet-ab-fg);
+  --ab-fg-active:         var(--fleet-ab-fg-active);
+  --ab-border:            var(--fleet-ab-border);
+  --sb-bg:                var(--fleet-sb-bg);
+  --sb-fg:                var(--fleet-sb-fg);
+  --sb-border:            var(--fleet-sb-border);
+  --sb-hdr-fg:            var(--fleet-sb-hdr-fg);
+  --sb-hover:             var(--fleet-sb-hover);
+  --sb-active:            var(--fleet-sb-active);
+  --sb-focus:             var(--fleet-sb-focus);
+  --ed-bg:                var(--fleet-ed-bg);
+  --ed-fg:                var(--fleet-ed-fg);
+  --tab-strip:            var(--fleet-tab-strip);
+  --tab-active:           var(--fleet-tab-active);
+  --tab-inactive:         var(--fleet-tab-inactive);
+  --tab-border:           var(--fleet-tab-border);
+  --tab-active-top:       var(--fleet-tab-top);
+  --tab-fg:               var(--fleet-tab-fg);
+  --tab-fg-active:        var(--fleet-tab-fg-active);
+  --panel-bg:             var(--fleet-ed-bg);
+  --status-bg:            var(--fleet-status-bg);
+  --status-fg:            var(--fleet-status-fg);
+  --in-bg:                var(--fleet-in-bg);
+  --in-border:            var(--fleet-in-border);
+  --in-fg:                var(--fleet-in-fg);
+  --in-focus:             var(--fleet-in-focus);
+  --in-placeholder:       var(--fleet-in-placeholder);
+  --btn-bg:               var(--fleet-btn-bg);
+  --btn-fg:               var(--fleet-btn-fg);
+  --btn-hover:            var(--fleet-btn-hover);
+  --btn-2nd:              var(--fleet-btn-2nd);
+  --border:               var(--fleet-border);
+  --accent:               var(--fleet-accent);
+  --muted:                var(--fleet-muted);
+  --green:                var(--fleet-green);
+  --red:                  var(--fleet-red);
+  --amber:                var(--fleet-amber);
+  --cyan:                 var(--fleet-cyan);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   LIGHT THEME — applied via .light class on <html> or <body>
+════════════════════════════════════════════════════════════════════════ */
+.light, .vsc-light {
+  --fleet-titlebar-bg:    #dddddd;
+  --fleet-titlebar-fg:    #333333;
+  --fleet-ab-bg:          #2c2c2c;
+  --fleet-ab-fg:          rgba(255,255,255,.5);
+  --fleet-ab-fg-active:   #ffffff;
+  --fleet-sb-bg:          #f3f3f3;
+  --fleet-sb-fg:          #333333;
+  --fleet-sb-border:      #e5e5e5;
+  --fleet-sb-hdr-fg:      #717171;
+  --fleet-sb-hover:       #e8e8e8;
+  --fleet-sb-active:      #d6ebff;
+  --fleet-sb-focus:       #0060c0;
+  --fleet-ed-bg:          #ffffff;
+  --fleet-ed-fg:          #000000;
+  --fleet-tab-strip:      #ececec;
+  --fleet-tab-active:     #ffffff;
+  --fleet-tab-inactive:   #ececec;
+  --fleet-tab-border:     #e5e5e5;
+  --fleet-tab-fg:         #717171;
+  --fleet-tab-fg-active:  #333333;
+  --fleet-in-bg:          #ffffff;
+  --fleet-in-border:      #cecece;
+  --fleet-in-fg:          #333333;
+  --fleet-border:         #e5e5e5;
+  --fleet-muted:          #717171;
+  --fleet-md-h1:          #7c4b00;
+  --fleet-md-h2:          #0a4f8c;
+  --fleet-md-h3:          #1a5c1a;
+  --fleet-md-code-bg:     rgba(0,0,0,.06);
+  --fleet-md-code-fg:     #c7254e;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   SHARED SCROLLBARS
+════════════════════════════════════════════════════════════════════════ */
+::-webkit-scrollbar{width:8px;height:8px}
+@keyframes fc-dot-pulse{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(121,121,121,.4);border-radius:4px}
+::-webkit-scrollbar-thumb:hover{background:rgba(121,121,121,.7)}
+
+/* ════════════════════════════════════════════════════════════════════════
+   SHARED COMPONENT CLASSES
+   These are the same in both Electron and React.
+   App-specific layout classes live in each app's own CSS file.
+════════════════════════════════════════════════════════════════════════ */
+
+/* ── Buttons ─────────────────────────────────────────────────────────── */
+.fleet-btn{padding:5px 14px;background:var(--fleet-btn-bg);color:var(--fleet-btn-fg);border:none;border-radius:2px;font-size:13px;font-family:inherit;cursor:pointer;transition:background .15s}
+.fleet-btn:hover{background:var(--fleet-btn-hover)}
+.fleet-btn.secondary{background:var(--fleet-btn-2nd);color:var(--fleet-ed-fg)}
+.fleet-btn.secondary:hover{background:rgba(255,255,255,.15)}
+.fleet-btn.danger{background:rgba(248,113,113,.15);color:var(--fleet-red);border:1px solid rgba(248,113,113,.3)}
+.fleet-btn.danger:hover{background:rgba(248,113,113,.25)}
+
+/* ── Inputs ─────────────────────────────────────────────────────────── */
+.fleet-input{background:var(--fleet-in-bg);border:1px solid var(--fleet-in-border);border-radius:3px;color:var(--fleet-in-fg);font-size:13px;font-family:inherit;padding:5px 8px;width:100%;outline:none;transition:border-color .15s}
+.fleet-input:focus{border-color:var(--fleet-in-focus);box-shadow:0 0 0 1px var(--fleet-in-focus)22}
+.fleet-input::placeholder{color:var(--fleet-in-placeholder)}
+
+/* ── Status dots ──────────────────────────────────────────────────────── */
+.fleet-dot{display:inline-block;width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.fleet-dot.running{background:var(--fleet-green);box-shadow:0 0 5px var(--fleet-green)}
+.fleet-dot.starting{background:var(--fleet-amber)}
+.fleet-dot.error{background:var(--fleet-red)}
+.fleet-dot.idle,.fleet-dot.done{background:var(--fleet-muted)}
+
+/* ── Context menu ─────────────────────────────────────────────────────── */
+.fleet-ctx-menu{position:fixed;background:#252526;border:1px solid #454545;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.6);z-index:9000;min-width:180px;padding:4px 0;backdrop-filter:blur(4px)}
+.fleet-ctx-item{display:flex;align-items:center;gap:8px;padding:7px 14px;font-size:13px;cursor:pointer;color:var(--fleet-ed-fg);transition:background .1s}
+.fleet-ctx-item:hover{background:var(--fleet-sb-focus);color:#fff}
+.fleet-ctx-item.danger{color:var(--fleet-red)}
+.fleet-ctx-item.danger:hover{background:rgba(248,113,113,.15);color:var(--fleet-red)}
+.fleet-ctx-sep{height:1px;background:var(--fleet-border);margin:4px 0}
+.fleet-ctx-shortcut{margin-left:auto;font-size:10px;opacity:.45;font-family:monospace}
+
+/* ── Message role badges ──────────────────────────────────────────────── */
+.fleet-role-badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.fleet-role-badge.user{background:rgba(0,122,204,.2);color:#61afef}
+.fleet-role-badge.assistant{background:rgba(152,195,121,.15);color:#98c379}
+.fleet-role-badge.result{background:rgba(74,222,128,.15);color:#4ade80}
+.fleet-role-badge.tool{background:rgba(229,192,123,.12);color:#e5c07b}
+.fleet-role-badge.system{background:rgba(106,115,125,.2);color:#6a737d}
+
+/* ── Filter tabs (chat role filter) ──────────────────────────────────── */
+.fleet-filter-tabs{display:flex;gap:2px;padding:4px 8px;background:var(--fleet-tab-strip);border-bottom:1px solid var(--fleet-tab-border)}
+.fleet-filter-tab{padding:3px 10px;border-radius:12px;font-size:11px;font-weight:500;cursor:pointer;background:transparent;border:1px solid transparent;color:var(--fleet-muted);transition:all .15s;font-family:inherit}
+.fleet-filter-tab:hover{color:var(--fleet-ed-fg);background:rgba(255,255,255,.07)}
+.fleet-filter-tab.active{background:var(--fleet-accent);color:#fff;border-color:var(--fleet-accent)}
+
+/* ── Chat search bar ─────────────────────────────────────────────────── */
+.fleet-chat-search{display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--fleet-ed-bg);border-bottom:1px solid var(--fleet-border)}
+.fleet-chat-search input{flex:1;background:rgba(255,255,255,.07);border:1px solid var(--fleet-border);border-radius:4px;color:var(--fleet-ed-fg);font-size:12px;padding:4px 8px;outline:none;font-family:inherit}
+.fleet-chat-search input:focus{border-color:var(--fleet-in-focus)}
+.fleet-chat-search input::placeholder{color:var(--fleet-muted)}
+
+/* ── Panel header style ───────────────────────────────────────────────── */
+.fleet-pane-hdr{padding:7px 12px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;user-select:none;border-bottom:1px solid var(--fleet-border)}
+.fleet-pane-hdr.green{color:#4ade80;border-left:3px solid #4ade80}
+.fleet-pane-hdr.blue{color:#61afef;border-left:3px solid #61afef}
+.fleet-pane-hdr.gold{color:#e5c07b;border-left:3px solid #e5c07b}
+.fleet-pane-hdr.purple{color:#c678dd;border-left:3px solid #c678dd}
+.fleet-pane-hdr.amber{color:#fbbf24;border-left:3px solid #fbbf24}
+.fleet-pane-hdr.cyan{color:#56b6c2;border-left:3px solid #56b6c2}
+.fleet-pane-hdr.default{color:var(--fleet-sb-hdr-fg)}
+
+/* ── Badge ────────────────────────────────────────────────────────────── */
+.fleet-badge{min-width:18px;height:18px;background:var(--fleet-accent);color:#fff;border-radius:9px;font-size:10px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;padding:0 5px}
+
+/* ════════════════════════════════════════════════════════════════════════
+   PANEL STYLING IMPROVEMENTS
+   Shared styles that make both the Electron app and React app look polished.
+   Applied via fleet-theme.css so one edit updates both.
+════════════════════════════════════════════════════════════════════════ */
+
+/* ── KPI / Stat Cards ─────────────────────────────────────────────────── */
+.fleet-kpi-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:10px 10px 6px}
+.fleet-kpi{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:6px;padding:10px 12px;position:relative;overflow:hidden;transition:background .15s}
+.fleet-kpi:hover{background:rgba(255,255,255,.06)}
+.fleet-kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;border-radius:6px 6px 0 0}
+.fleet-kpi.cost::before{background:linear-gradient(90deg,#4ade80,#22d3ee)}
+.fleet-kpi.input::before{background:linear-gradient(90deg,#61afef,#007acc)}
+.fleet-kpi.output::before{background:linear-gradient(90deg,#98c379,#4ade80)}
+.fleet-kpi.cache-r::before{background:linear-gradient(90deg,#c678dd,#a855f7)}
+.fleet-kpi.cache-w::before{background:linear-gradient(90deg,#e5c07b,#f59e0b)}
+.fleet-kpi.sessions::before{background:linear-gradient(90deg,#56b6c2,#0ea5e9)}
+.fleet-kpi-label{font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--fleet-muted);margin-bottom:4px;font-weight:600}
+.fleet-kpi-value{font-size:20px;font-weight:700;color:var(--fleet-ed-fg);line-height:1.1;font-variant-numeric:tabular-nums}
+.fleet-kpi-sub{font-size:10px;color:var(--fleet-muted);margin-top:3px}
+
+/* ── Account Limit Bars ────────────────────────────────────────────────── */
+.fleet-limit-row{margin-bottom:10px}
+.fleet-limit-label-row{display:flex;justify-content:space-between;align-items:center;font-size:11px;margin-bottom:4px}
+.fleet-limit-label{font-weight:500;color:var(--fleet-ed-fg)}
+.fleet-limit-right{display:flex;align-items:center;gap:8px}
+.fleet-limit-cd{font-family:monospace;font-size:10px;color:var(--fleet-muted);opacity:.85}
+.fleet-limit-pct{font-weight:700;font-variant-numeric:tabular-nums;font-size:11px}
+.fleet-limit-pct.ok{color:var(--fleet-green)}
+.fleet-limit-pct.warn{color:var(--fleet-amber)}
+.fleet-limit-pct.high{color:var(--fleet-red)}
+.fleet-limit-pct.count{color:var(--fleet-cyan)}
+.fleet-limit-track{background:rgba(255,255,255,.08);border-radius:4px;height:6px;overflow:hidden}
+.fleet-limit-fill{height:100%;border-radius:4px;transition:width .4s ease}
+.fleet-limit-fill.ok{background:var(--fleet-green);box-shadow:0 0 6px rgba(74,222,128,.4)}
+.fleet-limit-fill.warn{background:var(--fleet-amber);box-shadow:0 0 6px rgba(251,191,36,.4)}
+.fleet-limit-fill.high{background:var(--fleet-red);box-shadow:0 0 8px rgba(248,113,113,.6)}
+
+/* ── Session Items ─────────────────────────────────────────────────────── */
+.fleet-session-card{padding:8px 10px;border-radius:4px;margin:2px 4px;cursor:pointer;border:1px solid transparent;transition:all .12s;position:relative}
+.fleet-session-card:hover{background:var(--fleet-sb-hover);border-color:rgba(255,255,255,.06)}
+.fleet-session-card.selected{background:var(--fleet-sb-focus);border-color:var(--fleet-accent);box-shadow:inset 2px 0 0 var(--fleet-accent)}
+.fleet-session-card.running{border-color:rgba(74,222,128,.2)}
+.fleet-session-card.error{border-color:rgba(248,113,113,.2)}
+
+/* ── Chat Empty / Welcome State ────────────────────────────────────────── */
+.fleet-chat-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:16px;padding:32px;text-align:center}
+.fleet-chat-empty-icon{width:56px;height:56px;border-radius:14px;background:linear-gradient(135deg,rgba(0,122,204,.2),rgba(74,222,128,.1));border:1px solid rgba(0,122,204,.3);display:flex;align-items:center;justify-content:center;box-shadow:0 4px 24px rgba(0,122,204,.1)}
+.fleet-chat-empty-title{font-size:18px;font-weight:500;color:var(--fleet-ed-fg);margin:0}
+.fleet-chat-empty-sub{font-size:13px;color:var(--fleet-muted);max-width:320px;line-height:1.5;margin:0}
+.fleet-chat-empty-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:4px}
+.fleet-chat-empty-btn{padding:7px 16px;border-radius:6px;font-size:12px;font-family:inherit;cursor:pointer;transition:all .15s;font-weight:500}
+.fleet-chat-empty-btn.primary{background:var(--fleet-accent);color:#fff;border:none}
+.fleet-chat-empty-btn.primary:hover{background:var(--fleet-btn-hover);box-shadow:0 2px 12px rgba(0,122,204,.4)}
+.fleet-chat-empty-btn.secondary{background:transparent;color:var(--fleet-ed-fg);border:1px solid rgba(255,255,255,.15)}
+.fleet-chat-empty-btn.secondary:hover{background:rgba(255,255,255,.07);border-color:rgba(255,255,255,.25)}
+
+/* ── History Items ─────────────────────────────────────────────────────── */
+.fleet-history-item{padding:6px 10px 6px 18px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.03);position:relative;transition:background .1s}
+.fleet-history-item:hover{background:var(--fleet-sb-hover)}
+.fleet-history-item.selected{background:var(--fleet-sb-focus)}
+.fleet-history-item.selected::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--fleet-accent);border-radius:0 2px 2px 0}
+.fleet-history-item-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;font-size:12.5px;font-weight:500}
+.fleet-history-item-meta{font-size:10px;color:var(--fleet-muted);padding-left:12px;margin-top:2px;display:flex;align-items:center;gap:6px}
+
+/* ── Date Group Headers ────────────────────────────────────────────────── */
+.fleet-date-group{padding:5px 10px 3px;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;position:sticky;top:0;z-index:1;backdrop-filter:blur(4px)}
+.fleet-date-count{font-size:9px;margin-left:auto;opacity:.6;font-weight:500;background:rgba(255,255,255,.08);padding:1px 6px;border-radius:8px}
+
+/* ── Controls Form ─────────────────────────────────────────────────────── */
+.fleet-control-row{padding:5px 10px;display:grid;grid-template-columns:auto 1fr;gap:6px;align-items:center}
+.fleet-control-label{font-size:11px;color:var(--fleet-muted);white-space:nowrap}
+.fleet-control-input{background:var(--fleet-in-bg);border:1px solid var(--fleet-in-border);border-radius:3px;color:var(--fleet-in-fg);font-size:12px;font-family:inherit;padding:4px 8px;width:100%;outline:none;transition:border-color .15s}
+.fleet-control-input:focus{border-color:var(--fleet-in-focus);box-shadow:0 0 0 1px rgba(0,127,212,.25)}
+.fleet-control-actions{padding:8px 10px;display:flex;flex-direction:column;gap:3px;border-top:1px solid var(--fleet-border)}
+.fleet-action-btn{padding:6px 10px;background:rgba(255,255,255,.06);color:var(--fleet-ed-fg);border:1px solid rgba(255,255,255,.08);border-radius:4px;cursor:pointer;font-size:12px;font-family:inherit;text-align:left;width:100%;transition:all .12s}
+.fleet-action-btn:hover{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.16)}
+.fleet-action-btn.primary{background:rgba(0,122,204,.2);border-color:rgba(0,122,204,.4);color:var(--fleet-cyan)}
+.fleet-action-btn.primary:hover{background:rgba(0,122,204,.35)}
+.fleet-action-btn.danger{color:var(--fleet-red)}
+.fleet-action-btn.danger:hover{background:rgba(248,113,113,.12);border-color:rgba(248,113,113,.3)}
+
+/* ── Tool Analytics ────────────────────────────────────────────────────── */
+.fleet-analytics-bar{height:6px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden;margin-top:3px}
+.fleet-analytics-fill{height:100%;border-radius:3px;transition:width .4s ease}
+
+/* ── Section Separator ─────────────────────────────────────────────────── */
+.fleet-section{padding:8px 10px}
+.fleet-section-title{font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--fleet-muted);margin-bottom:8px;font-weight:700;display:flex;align-items:center;gap:6px}
+.fleet-section-title::after{content:'';flex:1;height:1px;background:rgba(255,255,255,.07)}
+
+/* ── Scrollable inner panels ───────────────────────────────────────────── */
+.fleet-scroll{overflow-y:auto;scrollbar-width:thin}
+.fleet-scroll::-webkit-scrollbar{width:4px}
+.fleet-scroll::-webkit-scrollbar-track{background:transparent}
+.fleet-scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:2px}
+
+/* ── Tooltip ────────────────────────────────────────────────────────────── */
+[title]{cursor:help}
+[title][onclick],[title][onmousedown],[title][tabindex]{cursor:pointer}
+
