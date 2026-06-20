@@ -298,6 +298,25 @@ function applyUsageReport(report) {
       });
     }
   }
+
+  // When the 5-hour window hits 100%, proactively mark all idle/running autoContinue sessions
+  // as "limited" so the scheduler picks them up and the UI shows the correct waiting state.
+  // This handles sessions that were idle when the limit was reached (they never get a rate_limit
+  // event from the runner since they didn't try to call the API).
+  const fiveHour = accountUsage.get("five_hour");
+  if (fiveHour && (fiveHour.utilization ?? 0) >= 100 && fiveHour.resetAt) {
+    for (const s of sessions.values()) {
+      if ((s.status === "idle" || s.status === "running") && s.autoContinue && !s.nextContinueAt) {
+        s.status = "limited";
+        s.resetAt = fiveHour.resetAt;
+        s.nextContinueAt = fiveHour.resetAt + BUFFER_MS;
+        recordMessage(s, {
+          role: "system",
+          text: `account 5h limit reached; reset ${new Date(fiveHour.resetAt).toLocaleString()}`,
+        });
+      }
+    }
+  }
 }
 
 // Bump on any public/ UI change. The client compares its own APP_BUILD to this and shows a
