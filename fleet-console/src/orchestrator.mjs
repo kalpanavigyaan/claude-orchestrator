@@ -500,6 +500,7 @@ function listHistory() {
             createdAt: meta.createdAt || null,
             status: meta.status || null,
             messages: Array.isArray(meta.interactions) ? meta.interactions.length : 0,
+            messageQueue: Array.isArray(meta.messageQueue) && meta.messageQueue.length > 0 ? meta.messageQueue : null,
             mtime,
           });
         }

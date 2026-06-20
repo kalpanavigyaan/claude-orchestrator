@@ -74,6 +74,7 @@ export interface HistorySession {
   outputTokens?: number;
   turns?: number;
   messages?: ChatMessage[];
+  messageQueue?: string[] | null;
 }
 
 export interface UsageHistory {
