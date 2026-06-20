@@ -1,6 +1,10 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   Fleet Console Electron — VS Code-like Dark Theme
+   Fleet Console Electron — App-specific Layout Styles
+   Shared theme variables come from fleet-theme.css (single source of truth).
 ══════════════════════════════════════════════════════════════════════════ */
+
+/* Import the shared theme — defines ALL CSS variables and shared component classes */
+@import './fleet-theme.css';
 
 :root {
   /* ── Core palette ─── */
@@ -54,6 +58,11 @@
   --tok-bool:     #569cd6;
   --tok-plain:    #d4d4d4;
   --tok-punct:    #d4d4d4;
+
+  /* ── Markdown emphasis colours (chat) — overridable via settings.json theme.colors ─── */
+  --md-bold:        #e5c07b;   /* bold  → gold   */
+  --md-italic:      #c586c0;   /* italic → purple */
+  --md-bolditalic:  #56b6c2;   /* bold+italic → cyan */
 }
 
 /* ── Reset ─────────────────────────────────────────────────── */
@@ -896,7 +905,8 @@ body {
   gap: 12px;
   min-height: 38px;
 }
-.chat-header-title { font-weight: 600; color: var(--vsc-editor-fg); }
+.chat-header-title { font-weight: 600; color: var(--vsc-editor-fg); cursor: text; }
+.chat-header-title[contenteditable="true"] { outline: 1px solid var(--vsc-blue); border-radius: 3px; padding: 0 4px; }
 .chat-header-meta  { font-size: 11px; color: var(--vsc-muted); }
 
 /* ── Messages ──────────────────────────────────────────────── */
@@ -952,8 +962,9 @@ body {
 .msg-body h3 { font-size: 13px; color: #9cdcfe; }
 .msg-body h4 { font-size: 13px; color: #c586c0; }
 .msg-body h5,.msg-body h6 { font-size: 12px; color: var(--vsc-muted); }
-.msg-body strong { color: #e8e8e8; font-weight: 700; }
-.msg-body em { color: #c586c0; font-style: italic; }
+.msg-body strong { color: var(--md-bold); font-weight: 700; }
+.msg-body em { color: var(--md-italic); font-style: italic; }
+.msg-body strong em, .msg-body em strong { color: var(--md-bolditalic); }
 .msg-body code {
   background: rgba(255,255,255,.08);
   padding: 1px 5px;
@@ -1016,6 +1027,9 @@ body {
   flex-shrink: 0;
 }
 .working.hidden { display: none; }
+.working.idle { opacity: .82; }
+.working.idle .dots,
+.working.idle .working-stop-btn { display: none; }
 .working-status {
   display: flex;
   align-items: center;
@@ -1044,11 +1058,12 @@ body {
   background: rgba(0,0,0,.25);
   border: 1px solid var(--vsc-border);
   border-radius: 3px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  max-height: 104px;
+  overflow-y: auto;
 }
 .working-cmd:empty { display: none; }
+.working-cmd-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 1px 0; line-height: 1.5; }
+.working-cmd-ts { color: var(--vsc-muted); opacity: .65; margin-right: 6px; }
 .working-cmd-arg { color: var(--vsc-blue); opacity: .85; }
 .dots { display: inline-flex; gap: 3px; }
 .dots i {
@@ -1064,6 +1079,21 @@ body {
   0%,80%,100%{opacity:.3;transform:scale(.8)}
   40%{opacity:1;transform:scale(1)}
 }
+
+/* ── Chat filter bar (role tabs + search) — matches React web app ──── */
+.chat-filter-bar{display:flex;align-items:center;justify-content:space-between;padding:4px 8px;background:var(--vsc-editor-bg);border-bottom:1px solid var(--vsc-border);flex-shrink:0}
+.chat-filter-tabs{display:flex;gap:2px}
+.chat-filter-tab{padding:3px 10px;border-radius:12px;font-size:11px;font-weight:500;cursor:pointer;background:transparent;border:1px solid transparent;color:var(--vsc-muted);transition:all .15s;font-family:inherit}
+.chat-filter-tab:hover{color:var(--vsc-editor-fg);background:rgba(255,255,255,.07)}
+.chat-filter-tab.active{background:var(--vsc-accent);color:#fff;border-color:var(--vsc-accent)}
+.chat-search-toggle{background:none;border:none;cursor:pointer;color:var(--vsc-muted);padding:3px 5px;border-radius:3px;display:flex;align-items:center}
+.chat-search-toggle:hover{color:var(--vsc-editor-fg);background:rgba(255,255,255,.1)}
+.chat-search-bar{display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--vsc-editor-bg);border-bottom:1px solid var(--vsc-border)}
+.chat-search-bar.hidden{display:none}
+.chat-search-bar input{flex:1;background:rgba(255,255,255,.07);border:1px solid var(--vsc-border);border-radius:4px;color:var(--vsc-editor-fg);font-size:12px;padding:4px 8px;outline:none;font-family:inherit}
+.chat-search-bar input:focus{border-color:var(--vsc-focus-border)}
+/* Hide messages that don't match the active filter */
+.messages .msg.role-hidden{display:none}
 
 /* ── Composer ──────────────────────────────────────────────── */
 .composer {

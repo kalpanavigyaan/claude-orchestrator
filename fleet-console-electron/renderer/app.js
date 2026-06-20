@@ -182,13 +182,14 @@ function fmtDate(iso) {
   const d = new Date(iso);
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
-function fmtCountdown(target) {
+function fmtCountdown(target, alwaysShowDays = false) {
   if (!target) return "—";
   let s = Math.max(0, Math.floor((target - serverNow()) / 1000));
-  const h = Math.floor(s / 3600); s -= h * 3600;
-  const m = Math.floor(s / 60);   s -= m * 60;
+  const d = Math.floor(s / 86400); s -= d * 86400;
+  const h = Math.floor(s / 3600);  s -= h * 3600;
+  const m = Math.floor(s / 60);    s -= m * 60;
   const p = (n) => String(n).padStart(2, "0");
-  return `${p(h)}:${p(m)}:${p(s)}`;
+  return (d > 0 || alwaysShowDays) ? `${d}d ${p(h)}:${p(m)}:${p(s)}` : `${p(h)}:${p(m)}:${p(s)}`;
 }
 
 // ─── Security ─────────────────────────────────────────────────────────────────
@@ -537,7 +538,7 @@ function renderStatusBar() {
     if (typeof w.utilization === "number") {
       const pct = Math.max(0, Math.min(100, w.utilization));
       const cls = pct >= 90 ? "high" : pct >= 70 ? "warn" : "";
-      const cd  = w.resetAt ? ` ↺${fmtCountdown(w.resetAt)}` : "";
+      const cd  = w.resetAt ? ` ↺${fmtCountdown(w.resetAt, w.type.startsWith('seven_day') || w.type === 'week_requests')}` : "";
       parts.push(`<span class="sb-chip ${cls}" title="${escapeHtml(full)}">${short}:${pct.toFixed(0)}%${cd}</span>`);
     } else if (w.requestCount != null) {
       parts.push(`<span class="sb-chip" title="${escapeHtml(full)}">${short}:${w.requestCount.toLocaleString()}</span>`);
@@ -668,8 +669,7 @@ function renderUsageTabContent() {
         if (typeof w.utilization === "number") {
           const pct = Math.max(0, Math.min(100, w.utilization));
           const cls = pct >= 90 ? "high" : pct >= 70 ? "warn" : "ok";
-          const cd  = w.resetAt ? `↺ ${fmtCountdown(w.resetAt)}` : "";
-          html += `<div class="uso-window-row">
+          const cd  = w.resetAt ? `↺ ${fmtCountdown(w.resetAt, w.type.startsWith('seven_day') || w.type === 'week_requests')}` : "";
             <span class="uso-dot ${cls}"></span>
             <span class="uso-window-label">${escapeHtml(lbl)}</span>
             <div class="uso-window-track"><div class="uso-window-fill ${cls}" style="width:${pct.toFixed(0)}%"></div></div>
@@ -813,12 +813,11 @@ function renderSessionsList() {
   list.innerHTML = sessions.map((s) => {
     const displaySt = liveDisplayStatus(s);
     const dotCls = displaySt === "running" ? "running" : displaySt === "starting" ? "starting" : displaySt === "error" ? "error" : "idle";
-    const statusCls = dotCls; // same class set on the item for selection ring colour
     const repo = s.cwd ? s.cwd.split(/[\\/]/).filter(Boolean).pop() : "";
-    return `<div class="session-item${s.id === selectedId ? " selected" : ""}" data-id="${escapeHtml(s.id)}">
+    return `<div class="session-item${s.id === selectedId ? " selected" : ""}" data-id="${escapeHtml(s.id)}" tabindex="0">
       <div class="session-item-top">
         <span class="session-status-dot ${dotCls}"></span>
-        <span class="session-label" title="${escapeHtml(s.label)}">${escapeHtml(s.label)}</span>
+        <span class="session-label" title="${escapeHtml(s.label)} — double-click or F2 to rename">${escapeHtml(s.label)}</span>
       </div>
       <div class="session-meta">
         <span class="session-repo">${escapeHtml(repo)}</span>
@@ -828,7 +827,92 @@ function renderSessionsList() {
   }).join("");
   list.querySelectorAll(".session-item").forEach((item) => {
     item.addEventListener("click", () => selectSession(item.dataset.id));
+    // Double-click → inline rename
+    item.addEventListener("dblclick", (e) => { e.stopPropagation(); startInlineRename(item); });
+    // Right-click → context menu
+    item.addEventListener("contextmenu", (e) => { e.preventDefault(); selectSession(item.dataset.id); showSessionContextMenu(e, item.dataset.id); });
+    // F2 when the item has focus
+    item.addEventListener("keydown", (e) => { if (e.key === "F2") { e.preventDefault(); startInlineRename(item); } });
   });
+}
+
+// ─── Inline session rename (shared by dblclick, F2, and context menu) ────────
+function startInlineRename(item) {
+  const id = item.dataset.id;
+  if (!id) return;
+  const labelEl = item.querySelector(".session-label");
+  if (!labelEl) return;
+  const current = labelEl.textContent;
+  labelEl.contentEditable = "true";
+  labelEl.style.outline = "1px solid var(--vsc-accent)";
+  labelEl.style.background = "rgba(0,122,204,.15)";
+  labelEl.focus();
+  // Select all
+  const range = document.createRange();
+  range.selectNodeContents(labelEl);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  const finish = async (save) => {
+    labelEl.contentEditable = "false";
+    labelEl.style.outline = "";
+    labelEl.style.background = "";
+    if (save && labelEl.textContent.trim()) {
+      await renameSession(id, labelEl.textContent);
+    } else {
+      labelEl.textContent = current;
+    }
+  };
+  const kd = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); labelEl.removeEventListener("keydown", kd); labelEl.removeEventListener("blur", bl); finish(true); }
+    if (e.key === "Escape") { labelEl.removeEventListener("keydown", kd); labelEl.removeEventListener("blur", bl); finish(false); }
+  };
+  const bl = () => { labelEl.removeEventListener("keydown", kd); finish(true); };
+  labelEl.addEventListener("keydown", kd);
+  labelEl.addEventListener("blur", bl, { once: true });
+}
+
+// ─── Session right-click context menu ────────────────────────────────────────
+let activeCtxMenu = null;
+function closeContextMenu() {
+  if (activeCtxMenu) { activeCtxMenu.remove(); activeCtxMenu = null; }
+}
+function showSessionContextMenu(e, id) {
+  closeContextMenu();
+  const s = latest?.sessions?.find(x => x.id === id);
+  if (!s) return;
+  const menu = document.createElement("div");
+  menu.className = "ctx-popup";
+  menu.style.cssText = `position:fixed;left:${e.clientX}px;top:${e.clientY}px;background:#252526;border:1px solid #454545;border-radius:4px;box-shadow:0 4px 16px rgba(0,0,0,.5);z-index:9000;min-width:170px;padding:4px 0;font-size:13px;color:#cccccc`;
+  const item = (label, shortcut, action, danger) => {
+    const el = document.createElement("div");
+    el.style.cssText = `display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer;justify-content:space-between${danger?";color:#f87171":""}`;
+    el.innerHTML = `<span>${escapeHtml(label)}</span>${shortcut?`<span style="opacity:.4;font-size:11px">${escapeHtml(shortcut)}</span>`:""}`;
+    el.addEventListener("mouseenter", () => { el.style.background = danger ? "rgba(248,113,113,.1)" : "#094771"; if (!danger) el.style.color = "#fff"; });
+    el.addEventListener("mouseleave", () => { el.style.background = ""; el.style.color = danger ? "#f87171" : "#cccccc"; });
+    el.addEventListener("click", () => { closeContextMenu(); action(); });
+    return el;
+  };
+  const sep = () => { const d = document.createElement("div"); d.style.cssText = "height:1px;background:#3c3c3c;margin:4px 0"; return d; };
+  // Get the session-item element for inline rename
+  const listEl = document.getElementById("sessions-list");
+  const itemEl = listEl ? listEl.querySelector(`[data-id="${CSS.escape(id)}"]`) : null;
+  menu.appendChild(item(`✏️ Rename`, "F2", () => { if (itemEl) startInlineRename(itemEl); }));
+  menu.appendChild(sep());
+  menu.appendChild(item("📋 Copy label", "", () => navigator.clipboard.writeText(s.label).catch(() => {})));
+  menu.appendChild(item("🆔 Copy session ID", "", () => navigator.clipboard.writeText(s.id).catch(() => {})));
+  menu.appendChild(sep());
+  menu.appendChild(item("⏹ Stop current task", "", () => api(`/api/sessions/${id}/interrupt`)));
+  menu.appendChild(item("⏏ End session", "", async () => {
+    if (confirm(`End session "${s.label}"?`)) { await api(`/api/sessions/${id}/stop`); }
+  }, true));
+  document.body.appendChild(menu);
+  activeCtxMenu = menu;
+  // Close on outside click
+  setTimeout(() => {
+    const close = (ev) => { if (!menu.contains(ev.target)) { closeContextMenu(); document.removeEventListener("click", close); } };
+    document.addEventListener("click", close);
+  }, 0);
 }
 
 // ─── Session selection ────────────────────────────────────────────────────────
@@ -855,22 +939,36 @@ function selectSession(id) {
 }
 
 function updateChatHeader(s) {
-  el("chat-title").textContent = s.label;
+  const titleEl = el("chat-title");
+  if (titleEl && titleEl.dataset.editing !== "1") titleEl.textContent = s.label;
   el("chat-meta").textContent = `${s.host}${s.distro ? ` · ${s.distro}` : ""} · ${s.cwd || ""}`;
 }
 
+async function renameSession(id, newLabel) {
+  const trimmed = newLabel.trim();
+  if (!trimmed || !id) return;
+  await api(`/api/sessions/${id}/rename`, { label: trimmed });
+}
+
+// Recent tool/command executions shown as a live feed in the working box (newest at the bottom).
+let recentTools = [];
+const RECENT_TOOLS_CAP = 12;
+
 function renderWorkingState(s) {
   const w = el("working");
-  if (!s || s.status !== "running") {
+  const running = !!(s && s.status === "running");
+  if (!running) {
     w.classList.add("hidden");
-    const cmd = el("working-cmd"); if (cmd) cmd.innerHTML = "";  // clear stale tool activity
+    const wt0 = el("working-text"); if (wt0) { delete wt0.dataset.live; wt0.textContent = "Claude is working…"; }
     return;
   }
   w.classList.remove("hidden");
-  el("working-text").textContent = "Claude is working…";
+  w.classList.remove("idle");
+  const wt = el("working-text");
+  if (wt && !wt.dataset.live) wt.textContent = "Claude is working…";
 }
 
-// One-line summary of a tool/command execution for the activity box above the composer.
+// One-line summary of a tool/command execution for the feed above the composer.
 function formatToolHtml(m) {
   const name = escapeHtml(m.name || "tool");
   let detail = "";
@@ -881,26 +979,51 @@ function formatToolHtml(m) {
   } else if (m.input != null) {
     detail = String(m.input);
   }
-  detail = detail.replace(/\s+/g, " ").trim().slice(0, 300);
+  detail = detail.replace(/\s+/g, " ").trim().slice(0, 400);
   return `🔧 <strong>${name}</strong>${detail ? ` <span class="working-cmd-arg">${escapeHtml(detail)}</span>` : ""}`;
 }
 
-// Show the current tool/command in the small box above the chat input instead of the transcript.
-function setToolActivity(m) {
+// "Jun 18 14:23:45" — log-style date+time for a feed entry.
+function fmtLogTs(ms) {
+  const d = ms ? new Date(ms) : new Date();
+  return `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${d.toLocaleTimeString([], { hour12: false })}`;
+}
+
+// Append a timestamped tool/command execution to the live feed above the chat input (a running log).
+function pushToolActivity(m) {
+  recentTools.push(`<span class="working-cmd-ts">${fmtLogTs(m.ts)}</span> ${formatToolHtml(m)}`);
+  if (recentTools.length > RECENT_TOOLS_CAP) recentTools.shift();
+  renderToolFeed();
+}
+
+function renderToolFeed() {
   const cmd = el("working-cmd");
   if (!cmd) return;
-  cmd.innerHTML = formatToolHtml(m);
-  // Only surface the box while this session is actually running (a stopped session's backlog
-  // tools shouldn't pop the box open).
+  cmd.innerHTML = recentTools.map((h) => `<div class="working-cmd-line">${h}</div>`).join("");
+  cmd.scrollTop = cmd.scrollHeight; // keep the newest in view
+}
+
+// Live in-turn status: "Thinking…", "Responding…", or "Running a tool…", with a short preview.
+function renderActivity(activity) {
   const s = latest?.sessions?.find((x) => x.id === selectedId);
-  if (s?.status === "running") el("working").classList.remove("hidden");
+  if (!s || s.status !== "running") return; // don't show animation when session is idle/stopped
+  const wt = el("working-text");
+  if (!wt) return;
+  if (!activity || !activity.phase) { delete wt.dataset.live; wt.textContent = "Claude is working…"; return; }
+  const LABEL = { thinking: "Thinking", responding: "Responding", tool: "Preparing a tool" };
+  const label = LABEL[activity.phase] || "Working";
+  const preview = (activity.preview || "").replace(/\s+/g, " ").trim().slice(0, 80);
+  wt.dataset.live = "1";
+  wt.textContent = preview ? `${label}… ${preview}` : `${label}…`;
+  el("working").classList.remove("hidden");
 }
 
 // ─── Session SSE ──────────────────────────────────────────────────────────────
 function openSessionSSE(id) {
   if (sessionES) { sessionES.close(); sessionES = null; }
   el("messages").innerHTML = "";
-  const cmd = el("working-cmd"); if (cmd) cmd.innerHTML = "";  // drop the previous session's tool activity
+  recentTools = [];
+  const cmd = el("working-cmd"); if (cmd) cmd.innerHTML = "";  // drop the previous session's tool feed
   sessionES = new EventSource(`${BASE}/api/sessions/${id}/events${tokenQ}`);
   sessionES.onmessage = (ev) => {
     let data; try { data = JSON.parse(ev.data); } catch { return; }
@@ -918,6 +1041,8 @@ function handleSessionEvent(ev) {
   } else if (ev.kind === "message") {
     if (!isViewingHistory) appendMessage(ev.message);
     if (!isViewingHistory) scrollMessages();
+  } else if (ev.kind === "activity") {
+    if (!isViewingHistory) renderActivity(ev.activity);
   } else if (ev.kind === "approval_request") {
     approvalQueue.push(ev);
     drainApprovals();
@@ -929,27 +1054,45 @@ function handleSessionEvent(ev) {
 const messagesEl = el("messages");
 function appendMessage(m) {
   const div = document.createElement("div");
-  div.className = "msg";
   const role = m.role || "system";
+  div.className = "msg";
+  div.dataset.role = role; // used by chat filter tabs
   const time = m.ts ? fmtTime(m.ts) : "";
-  let header = `<div class="msg-header"><span class="msg-role ${role}">${role}</span><span>${time}</span></div>`;
+
+  // Role-badge header (matches web app style)
+  const roleColors = { user:"#61afef", assistant:"#98c379", result:"#4ade80", tool:"#e5c07b", system:"#6a737d" };
+  const roleColor = roleColors[role] || "#cccccc";
+  let header = `<div class="msg-header" style="display:flex;align-items:center;gap:6px;padding:3px 8px 2px;background:${roleColor}10;border-bottom:1px solid ${roleColor}18">` +
+    `<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;background:${roleColor}22;color:${roleColor}">${role}</span>` +
+    `<span style="margin-left:auto;font-size:10px;opacity:.5">${time}</span></div>`;
   let body = "";
+
   if (role === "user") {
+    recentTools = [];
+    renderToolFeed();
     body = `<div class="msg-body">${mdToHtml(m.text || "")}</div>`;
   } else if (role === "assistant") {
     body = `<div class="msg-body">${mdToHtml(m.text || "")}</div>`;
   } else if (role === "tool") {
-    // Tool/command executions don't belong in the transcript — show them in the small
-    // activity box above the chat input instead.
-    setToolActivity(m);
+    // Also track in the "Tools" filter tab — show tool messages when that tab is active
+    pushToolActivity(m);
+    // Still create a filterable element for the Tools tab
+    div.style.cssText = "display:none"; // hidden by default, shown when role=tool tab active
+    body = `<div style="padding:5px 10px;font-family:monospace;font-size:12px;color:#e5c07b">🔧 <strong>${escapeHtml(m.name||"tool")}</strong>${m.input!=null?" "+escapeHtml(typeof m.input==="string"?m.input:JSON.stringify(m.input).slice(0,160)):""}</div>`;
+    div.innerHTML = header + body;
+    messagesEl.appendChild(div);
+    applyChatFilter();
     return;
   } else if (role === "result") {
     body = `<div class="msg-body">${mdToHtml(m.text || "")}</div>`;
   } else {
-    body = `<div class="msg-system-text">${escapeHtml(m.text || "")}</div>`;
+    body = `<div class="msg-system-text" style="text-align:center;font-size:11px;opacity:.6;padding:3px">${escapeHtml(m.text || "")}</div>`;
+    header = ""; // no header for system messages
   }
+  div.style.cssText = `border:1px solid ${roleColor}18;border-radius:6px;overflow:hidden;margin-bottom:5px;background:${role==="user"?"rgba(97,175,239,.08)":role==="result"?"rgba(74,222,128,.05)":"rgba(255,255,255,.03)"}`;
   div.innerHTML = header + body;
   messagesEl.appendChild(div);
+  applyChatFilter();
 }
 
 function scrollMessages() {
@@ -1128,7 +1271,7 @@ function renderControls() {
 }
 
 // ─── Intelligence panel ───────────────────────────────────────────────────────
-const DEFAULT_INTEL_TOOLS = ["safr","chunkhound","region_extract","symbol_scope","tds","noise_filter","log_dedup","stack_collapse"];
+const DEFAULT_INTEL_TOOLS = ["region_extract","tds"];
 const INTELLIGENCE_TOOLS = [
   // Code intelligence
   { id: "safr",          label: "SAFR",          group: "Code Intelligence",  desc: "Symbol-aware file reader — reads files with context awareness" },
@@ -1362,8 +1505,78 @@ function renderHistoryTree() {
   // Wire session item clicks
   treeEl.querySelectorAll(".tree-session-item").forEach((item) => {
     item.addEventListener("click",    () => viewHistoryItem(item.dataset.rel));
-    item.addEventListener("dblclick", () => viewHistoryItemModal(item.dataset.rel));
+    item.addEventListener("keydown",  (e) => { if (e.key === "F2") startHistoryItemRename(item); });
+    item.addEventListener("contextmenu", (e) => { e.preventDefault(); showHistoryContextMenu(e, item); });
   });
+}
+
+// ─── History item inline rename ──────────────────────────────────────────────
+function startHistoryItemRename(item) {
+  const rel = item.dataset.rel;
+  if (!rel) return;
+  const nameEl = item.querySelector(".tree-session-name");
+  if (!nameEl) return;
+  const current = nameEl.textContent;
+  nameEl.contentEditable = "true";
+  nameEl.style.outline = "1px solid var(--vsc-accent)";
+  nameEl.style.background = "rgba(0,122,204,.15)";
+  nameEl.focus();
+  const range = document.createRange();
+  range.selectNodeContents(nameEl);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  const finish = async (save) => {
+    nameEl.contentEditable = "false";
+    nameEl.style.outline = "";
+    nameEl.style.background = "";
+    if (save && nameEl.textContent.trim() && nameEl.textContent.trim() !== current) {
+      await api("/api/history/rename", { rel, label: nameEl.textContent.trim() });
+      // Update chat header if this item is currently being viewed
+      if (viewingRel === rel) {
+        el("chat-title").textContent = nameEl.textContent.trim();
+      }
+    } else {
+      nameEl.textContent = current;
+    }
+  };
+  const kd = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); nameEl.removeEventListener("keydown", kd); nameEl.removeEventListener("blur", bl); finish(true); }
+    if (e.key === "Escape") { nameEl.removeEventListener("keydown", kd); nameEl.removeEventListener("blur", bl); finish(false); }
+  };
+  const bl = () => { nameEl.removeEventListener("keydown", kd); finish(true); };
+  nameEl.addEventListener("keydown", kd);
+  nameEl.addEventListener("blur", bl, { once: true });
+}
+
+// ─── History item context menu ───────────────────────────────────────────────
+function showHistoryContextMenu(e, item) {
+  closeContextMenu(); // reuse the session context menu closer
+  const rel = item.dataset.rel;
+  if (!rel) return;
+  const menu = document.createElement("div");
+  menu.className = "ctx-popup";
+  menu.style.cssText = `position:fixed;left:${e.clientX}px;top:${e.clientY}px;background:#252526;border:1px solid #454545;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.6);z-index:9000;min-width:180px;padding:4px 0;font-size:13px;color:#cccccc`;
+  const row = (label, shortcut, action) => {
+    const el2 = document.createElement("div");
+    el2.style.cssText = "display:flex;align-items:center;gap:8px;padding:7px 14px;cursor:pointer;justify-content:space-between";
+    el2.innerHTML = `<span>${label}</span>${shortcut?`<span style="opacity:.4;font-size:11px">${shortcut}</span>`:""}`;
+    el2.addEventListener("mouseenter", () => { el2.style.background = "#094771"; el2.style.color = "#fff"; });
+    el2.addEventListener("mouseleave", () => { el2.style.background = ""; el2.style.color = "#cccccc"; });
+    el2.addEventListener("click", () => { closeContextMenu(); action(); });
+    return el2;
+  };
+  const sep = () => { const d = document.createElement("div"); d.style.cssText = "height:1px;background:#3c3c3c;margin:4px 0"; return d; };
+  menu.appendChild(row("✏️ Rename", "F2", () => startHistoryItemRename(item)));
+  menu.appendChild(sep());
+  menu.appendChild(row("📖 View Transcript", "", () => viewHistoryItem(rel)));
+  menu.appendChild(row("▸ Resume Session", "", async () => { const r = await api("/api/history/resume", { rel }); if (r?.id) selectSession(r.id); }));
+  document.body.appendChild(menu);
+  activeCtxMenu = menu;
+  setTimeout(() => {
+    const close = (ev) => { if (!menu.contains(ev.target)) { closeContextMenu(); document.removeEventListener("click", close); } };
+    document.addEventListener("click", close);
+  }, 0);
 }
 
 async function viewHistoryItem(rel) {
@@ -1695,10 +1908,14 @@ async function applyCheckedReposToSession() {
   if (!selectedId) { alert("Select a session first."); return; }
   const s = latest?.sessions?.find((x) => x.id === selectedId);
   if (!s) return;
-  // Build new directories: keep cwd + checked repos (avoid dupes)
+  // Keep existing dirs (preserving their read/write access) + add checked repos as read-only.
+  const access = s.directoryAccess || {};
   const existing = new Set((s.additionalDirectories || []).map((d) => d.replace(/\\/g, "/")));
   const toAdd = [...checkedRepos].filter((p) => !existing.has(p));
-  const dirs = [...(s.additionalDirectories || []), ...toAdd];
+  const dirs = [
+    ...(s.additionalDirectories || []).map((p) => ({ path: p, access: access[p] === "write" ? "write" : "read" })),
+    ...toAdd.map((p) => ({ path: p, access: "read" })),
+  ];
   await api(`/api/sessions/${s.id}/set-directories`, { directories: dirs });
   lastControlsSig = "";
 }
@@ -1716,7 +1933,7 @@ function seedDirPanel(s) {
   dirPanel = {
     sid: s.id,
     cwd: s.cwd || "",
-    dirs: (s.additionalDirectories || []).map((p) => ({ path: p, access: access[p] === "read" ? "read" : "write" })),
+    dirs: (s.additionalDirectories || []).map((p) => ({ path: p, access: access[p] === "write" ? "write" : "read" })),
   };
   dirCwdTreeShown = false;
   dirAddTreeShown = false;
@@ -1762,7 +1979,7 @@ function buildDirPanel(s) {
         <button id="dir-add-btn" class="btn-secondary">+ Add</button>
       </div>
       <button id="dir-update" class="dir-update-btn">Update &amp; tell Claude</button>
-      <div class="dir-hint">Read-only folders are enforced (edits blocked) and Claude is told the policy.</div>
+      <div class="dir-hint">Added folders are <b>read-only</b> by default — toggle <b>write</b> to allow edits. Read-only is enforced (edits blocked) and Claude is told the policy.</div>
     </div>`;
 
   renderDirList();
@@ -1786,7 +2003,7 @@ function buildDirPanel(s) {
     const inp = el("dir-add-input");
     const p = (inp?.value || "").trim();
     if (!p) return;
-    if (!dirPanel.dirs.some((d) => d.path === p)) dirPanel.dirs.push({ path: p, access: "write" });
+    if (!dirPanel.dirs.some((d) => d.path === p)) dirPanel.dirs.push({ path: p, access: "read" });
     if (inp) inp.value = "";
     renderDirList();
     if (dirAddTreeShown) renderDirTree("dir-add-tree", "add");
@@ -1891,7 +2108,7 @@ function renderDirTree(containerId, mode) {
         c.classList.add("hidden");
       } else {
         const idx = dirPanel.dirs.findIndex((d) => d.path === p);
-        if (idx === -1) dirPanel.dirs.push({ path: p, access: "write" }); else dirPanel.dirs.splice(idx, 1);
+        if (idx === -1) dirPanel.dirs.push({ path: p, access: "read" }); else dirPanel.dirs.splice(idx, 1);
         renderDirList();
         renderDirTree(containerId, mode); // refresh checkmarks
       }
@@ -2284,6 +2501,7 @@ async function createNewSession() {
     effort:               el("f-effort").value,
     thinking:             el("f-thinking").value,
     browser:              el("f-browser").checked,
+    toolServer:           !!(latest?.toolServer?.enabled),
     autoContinue:         el("f-autocontinue").checked,
     initialPrompt:        el("f-prompt").value.trim(),
   };
@@ -2430,7 +2648,65 @@ function setupPeriodicRefresh() {
 }
 
 // ─── Wire all static event listeners ─────────────────────────────────────────
+// ─── Chat role filter + message search ────────────────────────────────────────
+let activeChatRole = "all";
+let chatSearchText = "";
+
+function applyChatFilter() {
+  const msgs = qsa(".msg", el("messages"));
+  msgs.forEach((div) => {
+    const role = div.dataset.role || "system";
+    const matchRole = activeChatRole === "all" || role === activeChatRole;
+    const text = div.textContent || "";
+    const matchSearch = !chatSearchText || text.toLowerCase().includes(chatSearchText.toLowerCase());
+    div.classList.toggle("role-hidden", !matchRole || !matchSearch);
+  });
+  // Update search result count
+  const visible = qsa(".msg:not(.role-hidden)", el("messages")).length;
+  const countEl = el("chat-search-count");
+  if (countEl && chatSearchText) countEl.textContent = `${visible} result${visible !== 1 ? "s" : ""}`;
+  else if (countEl) countEl.textContent = "";
+}
+
 function wireStaticListeners() {
+  // Chat role filter tabs
+  qsa(".chat-filter-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      qsa(".chat-filter-tab").forEach((t) => t.classList.remove("active"));
+      tab.classList.add("active");
+      activeChatRole = tab.dataset.role || "all";
+      applyChatFilter();
+    });
+  });
+  // Chat search toggle
+  const searchToggle = el("btn-chat-search");
+  const searchBar    = el("chat-search-bar");
+  const searchInput  = el("chat-search-input");
+  const searchClose  = el("btn-chat-search-close");
+  if (searchToggle && searchBar) {
+    searchToggle.addEventListener("click", () => {
+      searchBar.classList.toggle("hidden");
+      if (!searchBar.classList.contains("hidden")) searchInput?.focus();
+    });
+  }
+  if (searchClose && searchBar) {
+    searchClose.addEventListener("click", () => {
+      searchBar.classList.add("hidden");
+      chatSearchText = "";
+      if (searchInput) searchInput.value = "";
+      applyChatFilter();
+    });
+  }
+  if (searchInput) {
+    searchInput.addEventListener("input", () => {
+      chatSearchText = searchInput.value;
+      applyChatFilter();
+    });
+    searchInput.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { searchBar.classList.add("hidden"); chatSearchText = ""; searchInput.value = ""; applyChatFilter(); }
+    });
+  }
+
   // Accordion section headers (no longer exist — no-op)
   // Right activity bar icons
   qsa(".rab-icon").forEach((btn) => {
@@ -2553,6 +2829,32 @@ function wireStaticListeners() {
   // Working stop button
   el("working-stop").addEventListener("click", async () => {
     if (selectedId) await api(`/api/sessions/${selectedId}/interrupt`);
+  });
+
+  // Double-click chat title to rename the session inline
+  el("chat-title").addEventListener("dblclick", () => {
+    if (!selectedId) return;
+    const titleEl = el("chat-title");
+    const current = titleEl.textContent;
+    titleEl.dataset.editing = "1";
+    titleEl.contentEditable = "true";
+    titleEl.focus();
+    const range = document.createRange();
+    range.selectNodeContents(titleEl);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    const finish = async (save) => {
+      titleEl.contentEditable = "false";
+      delete titleEl.dataset.editing;
+      if (save) await renameSession(selectedId, titleEl.textContent);
+      else titleEl.textContent = current;
+    };
+    titleEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); finish(true); }
+      if (e.key === "Escape") finish(false);
+    }, { once: true });
+    titleEl.addEventListener("blur", () => finish(true), { once: true });
   });
 
   // Reset modal
