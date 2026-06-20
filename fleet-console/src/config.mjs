@@ -48,31 +48,60 @@ function coerce(v) {
   return v;
 }
 
-/** Minimal YAML reader: nested key/value mappings only (no lists, anchors, or multiline scalars). */
+/** Minimal YAML reader: handles nested mappings AND simple block-sequence lists (`- value`). */
 function parseYaml(text) {
   const root = {};
+  // stack entries: { indent, obj } where obj is a plain Object or an Array
   const stack = [{ indent: -1, obj: root }];
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.replace(/\t/g, "  ");
-    if (!line.trim() || line.trim().startsWith("#")) {
+    if (!line.trim() || line.trim().startsWith("#")) continue;
+    const noComment = line.replace(/\s+#.*$/, "");
+    const indent    = noComment.match(/^ */)[0].length;
+    const trimmed   = noComment.trim();
+
+    // ── Block-sequence item: "- value"
+    if (trimmed.startsWith("- ")) {
+      const itemVal = trimmed.slice(2).trim();
+      // Pop stack until we're inside the array that owns this indent
+      while (stack.length > 1 && indent <= stack[stack.length - 1].indent) stack.pop();
+      const top = stack[stack.length - 1].obj;
+      // The parent *mapping* key already set its value to an array (see below).
+      // If the top of stack is an object (not an array) just skip (shouldn't happen in valid YAML).
+      if (Array.isArray(top)) {
+        top.push(coerce(itemVal));
+      }
       continue;
     }
-    const noComment = line.replace(/\s+#.*$/, ""); // strip a trailing " # comment"
-    const indent = noComment.match(/^ */)[0].length;
-    const m = noComment.trim().match(/^([^:]+):\s*(.*)$/);
-    if (!m) {
-      continue;
-    }
+
+    // ── Mapping entry: "key: value" or "key:" (block mapping)
+    const m = trimmed.match(/^([^:]+):\s*(.*)$/);
+    if (!m) continue;
     const key = m[1].trim();
     const val = m[2].trim();
-    while (stack.length > 1 && indent <= stack[stack.length - 1].indent) {
-      stack.pop();
-    }
+    while (stack.length > 1 && indent <= stack[stack.length - 1].indent) stack.pop();
     const parent = stack[stack.length - 1].obj;
+    if (Array.isArray(parent)) continue; // guard: mapping key inside sequence = skip
+
     if (val === "") {
-      const child = {};
-      parent[key] = child;
-      stack.push({ indent, obj: child });
+      // Could be a nested mapping OR a block sequence — we won't know until the next line.
+      // Use a special sentinel array so that "- …" items can push into it; if the next
+      // non-empty line is a key:, deepMerge will handle the plain object case correctly.
+      // We peek ahead: if the next data line starts with "- ", create an array; else a plain obj.
+      const nextData = text.split(/\r?\n/).find((l, idx) => {
+        const already = text.split(/\r?\n/).indexOf(rawLine);
+        return idx > already && l.trim() && !l.trim().startsWith("#");
+      });
+      const isSeq = nextData && nextData.replace(/\t/g, "  ").trimStart().startsWith("- ");
+      if (isSeq) {
+        const arr = [];
+        parent[key] = arr;
+        stack.push({ indent, obj: arr });
+      } else {
+        const child = {};
+        parent[key] = child;
+        stack.push({ indent, obj: child });
+      }
     } else {
       parent[key] = coerce(val);
     }

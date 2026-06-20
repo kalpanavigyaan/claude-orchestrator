@@ -109,8 +109,7 @@ let toolServerEnabled = !!config.toolServerUrl;
 // high-leverage subset and deny the rest in canUseTool (works in every mode, including auto).
 // The UI changes this live via the `set_tools` command.
 const DEFAULT_INTEL_TOOLS = [
-  "safr", "chunkhound", "region_extract", "symbol_scope",
-  "tds", "noise_filter", "log_dedup", "stack_collapse",
+  "region_extract", "tds",
 ];
 // SDK names MCP tools `mcp__<serverName>__<toolName>`; our tool server is registered as "toolServer".
 const TOOL_NAME_PREFIX = "mcp__toolServer__";

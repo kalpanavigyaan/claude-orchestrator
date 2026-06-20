@@ -31,6 +31,8 @@ const PORT = config.server.port;
 const HOST = config.server.host;
 const TOKEN = config.server.token;
 const BUFFER_MS = config.continue.bufferSeconds * 1000;
+// Delay before auto-retrying after a transient API rate-limit error ("temporarily limiting").
+const API_RETRY_DELAY_MS = 20 * 1000;
 const MIN_INTERVAL_MS = config.continue.minIntervalSeconds * 1000;
 const USAGE_POLL_MS = Math.max(1000, config.usage.pollSeconds * 1000);
 const MESSAGE_CAP = 500;
@@ -44,7 +46,7 @@ const TOOL_SERVER_PORT = (config.toolServer && config.toolServer.port) || 4319;
 // DEFAULT_TOOLS. A session may override this per-session from the Intelligence tab.
 const DEFAULT_INTEL_TOOLS = (config.toolServer && Array.isArray(config.toolServer.defaultTools) && config.toolServer.defaultTools.length)
   ? config.toolServer.defaultTools.slice()
-  : ["safr", "chunkhound", "region_extract", "symbol_scope", "tds", "noise_filter", "log_dedup", "stack_collapse"];
+  : ["region_extract", "tds"];
 
 // Windows host IP as seen from WSL — resolved once at startup so all WSL runners can reach the
 // tool server over HTTP MCP without any per-distro installation.
@@ -213,6 +215,7 @@ function sessionSummary(s) {
     nextContinueAt: s.nextContinueAt,
     lastContinueAt: s.lastContinueAt,
     autoContinue: s.autoContinue,
+    autoRetryApiError: s.autoRetryApiError,
     pendingApprovals: [...s.pendingApprovals.values()],
     lastResult: s.lastResult || null,
     createdAt: s.createdAt,
@@ -756,13 +759,14 @@ function deliverUserText(s, text) {
 
 /**
  * Normalize a directories payload (array of strings or {path, access}) into a clean list of
- * { path, access } with access ∈ {"read","write"} (default "write").
+ * { path, access } with access ∈ {"read","write"}. Additional directories default to READ-ONLY —
+ * write must be granted explicitly (access: "write").
  */
 function normalizeDirectories(items) {
   return (Array.isArray(items) ? items : [])
     .map((d) => (typeof d === "string"
-      ? { path: d.trim(), access: "write" }
-      : { path: String(d?.path || "").trim(), access: d?.access === "read" ? "read" : "write" }))
+      ? { path: d.trim(), access: "read" }
+      : { path: String(d?.path || "").trim(), access: d?.access === "write" ? "write" : "read" }))
     .filter((d) => d.path);
 }
 
@@ -1231,17 +1235,20 @@ function createSession(spec) {
     tools,
     policy,
     additionalDirectories: Array.isArray(spec.additionalDirectories) ? spec.additionalDirectories.slice() : [],
-    // Per-directory access policy (path → "read" | "write"). New dirs default to write/edit;
-    // read-only is enforced soft (an injected policy message) and hard (canUseTool in the runner).
+    // Per-directory access policy (path → "read" | "write"). Additional dirs default to READ-ONLY
+    // (write must be granted explicitly); read-only is enforced soft (an injected policy message)
+    // and hard (canUseTool in the runner). The working directory (cwd) is always writable.
     directoryAccess: (spec.directoryAccess && typeof spec.directoryAccess === "object")
       ? { ...spec.directoryAccess }
-      : Object.fromEntries((Array.isArray(spec.additionalDirectories) ? spec.additionalDirectories : []).map((d) => [String(d), "write"])),
+      : Object.fromEntries((Array.isArray(spec.additionalDirectories) ? spec.additionalDirectories : []).map((d) => [String(d), "read"])),
     autoContinue: spec.autoContinue !== false,
+    autoRetryApiError: spec.autoRetryApiError !== false,
     status: "starting",
     ready: false,
     resetAt: null,
     nextContinueAt: null,
     lastContinueAt: null,
+    nextRetryAt: null,
     createdAt: now(),
     sessionDir,
     instructionsDir,
@@ -1321,7 +1328,7 @@ function resumeSession(rel) {
     effort: meta.effort || undefined,
     thinking: meta.thinking || undefined,
     browser: meta.browser != null ? meta.browser : undefined,
-    toolServer: meta.toolServer != null ? meta.toolServer : undefined,
+    toolServer: meta.toolServer === true ? true : undefined, // false from old sessions re-defaults to global
     tools: Array.isArray(meta.tools) ? meta.tools : undefined,
     additionalDirectories: Array.isArray(meta.additionalDirectories) ? meta.additionalDirectories : undefined,
     directoryAccess: (meta.directoryAccess && typeof meta.directoryAccess === "object") ? meta.directoryAccess : undefined,
@@ -1435,6 +1442,12 @@ function handleRunnerEvent(s, event) {
         s.status = "error";
         s.activity = null;
         recordMessage(s, { role: "system", text: `error: ${event.detail || ""}` });
+        // Transient API rate limit ("temporarily limiting") — not the 5h usage limit.
+        // Schedule an auto-respawn if the session has autoRetryApiError enabled.
+        const isApiRateLimit = /temporarily.limiting|overloaded|529/i.test(event.detail || "");
+        if (isApiRateLimit && s.autoRetryApiError !== false) {
+          s.nextRetryAt = now() + API_RETRY_DELAY_MS;
+        }
       } else if (event.status === "ended") {
         s.status = "ended";
         s.activity = null;
@@ -1451,7 +1464,7 @@ function handleRunnerEvent(s, event) {
       // Live in-turn status (thinking/responding/preparing a tool) — NOT a chat message, just a
       // transient indicator surfaced in the working line. Wake the per-session SSE so the UI resyncs.
       s.activity = event.phase ? { phase: event.phase, preview: event.preview || "", ts: now() } : null;
-      pushSessionEvent(s, { kind: "activity" });
+      pushSessionEvent(s, { kind: "activity", activity: s.activity });
       break;
     case "models":
       if (Array.isArray(event.models)) {
@@ -1534,6 +1547,20 @@ function handleRunnerEvent(s, event) {
 
 function schedulerTick() {
   for (const s of sessions.values()) {
+    // Auto-retry after transient API rate limit error ("Server is temporarily limiting requests")
+    if (s.status === "error" && s.autoRetryApiError !== false && s.nextRetryAt && now() >= s.nextRetryAt) {
+      s.nextRetryAt = null;
+      recordMessage(s, { role: "system", text: "auto-retrying after API rate limit…" });
+      const old = s.proc;
+      if (old) {
+        try { if (!old.killed) old.kill(); } catch { /* ignore */ }
+        s.proc = null;
+      }
+      s.status = "starting";
+      spawnRunner(s);
+      broadcastFleet();
+      continue;
+    }
     if (s.status !== "limited" || !s.autoContinue || !s.nextContinueAt) {
       continue;
     }
@@ -1710,6 +1737,26 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Rename a saved history session label (writes label into session.json)
+  if (pathname === "/api/history/rename" && method === "POST") {
+    const body = await readBody(req);
+    const rel   = (body.rel   || "").toString().replace(/\.\./g, "").trim();
+    const label = (body.label || "").toString().trim();
+    if (!rel || !label) { sendJson(res, 400, { ok: false, reason: "rel and label required" }); return; }
+    const dir = path.join(SESSIONS_DIR, rel);
+    const jf  = path.join(dir, "session.json");
+    try {
+      let meta = {};
+      try { meta = JSON.parse(fs.readFileSync(jf, "utf8")); } catch { /* new */ }
+      meta.label = label;
+      fs.writeFileSync(jf, JSON.stringify(meta, null, 2), "utf8");
+      sendJson(res, 200, { ok: true });
+    } catch (e) {
+      sendJson(res, 500, { ok: false, reason: e.message });
+    }
+    return;
+  }
+
   if (pathname === "/api/wsl/distros" && method === "GET") {
     sendJson(res, 200, { distros: await listWslDistrosVerbose() });
     return;
@@ -1722,6 +1769,57 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     sendJson(res, 200, { repos: await listWslRepos(distro) });
+    return;
+  }
+
+  // Config endpoint — returns configured repo roots so the UI can offer quick-access shortcuts
+  if (pathname === "/api/config/repos" && method === "GET") {
+    // Fast scan: list immediate subdirectories (not full git status — that's /api/repos)
+    const localGroups = [];
+    for (const root of REPO_LOCAL_ROOTS) {
+      try {
+        const entries = fs.readdirSync(root, { withFileTypes: true })
+          .filter(e => e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules")
+          .map(e => ({ name: e.name, path: path.join(root, e.name).replace(/\\/g, "/") }));
+        localGroups.push({ root: root.replace(/\\/g, "/"), repos: entries });
+      } catch { /* skip unreadable */ }
+    }
+    sendJson(res, 200, {
+      localRoots: REPO_LOCAL_ROOTS.map(r => r.replace(/\\/g, "/")),
+      localGroups,
+    });
+    return;
+  }
+
+  // host=local uses the Windows filesystem; host=wsl uses the specified distro.
+  if (pathname === "/api/browse" && method === "GET") {
+    const host   = (query.host   || "local").toString();
+    const distro = (query.distro || "").toString();
+    const dir    = (query.path   || (host === "wsl" ? "/" : os.homedir())).toString();
+    try {
+      let entries = [];
+      if (host === "wsl" && distro) {
+        // List directories via WSL
+        const script = `ls -1ap "${dir.replace(/"/g, '\\"')}" 2>/dev/null | grep '/' | grep -v '^\\.\\./$' | head -200\n`;
+        const r = await runCapture("wsl.exe", ["-d", distro, "--", "bash", "-s"], { encoding: "utf8", timeoutMs: 8000, stdin: script });
+        entries = r.out.split(/\r?\n/).map(l => l.trim().replace(/\/$/, "")).filter(Boolean)
+          .map(name => ({ name, path: dir.endsWith("/") ? dir + name : dir + "/" + name, isDir: true }));
+      } else {
+        // List local Windows directories
+        const safePath = path.normalize(dir);
+        const items = fs.readdirSync(safePath, { withFileTypes: true });
+        entries = items
+          .filter(d => d.isDirectory() && !d.name.startsWith("."))
+          .slice(0, 200)
+          .map(d => ({ name: d.name, path: path.join(safePath, d.name).replace(/\\/g, "/"), isDir: true }));
+      }
+      const parent = host === "wsl"
+        ? (dir === "/" ? null : dir.replace(/\/?[^/]+\/?$/, "") || "/")
+        : (path.dirname(dir) !== dir ? path.dirname(dir).replace(/\\/g, "/") : null);
+      sendJson(res, 200, { path: dir, parent, entries });
+    } catch (e) {
+      sendJson(res, 200, { path: dir, parent: null, entries: [], error: e.message });
+    }
     return;
   }
 
@@ -2020,8 +2118,17 @@ const server = http.createServer(async (req, res) => {
         }, 1000);
       }
       sendJson(res, 200, { ok: true });
-    } else if (verb === "auto-continue") {
-      s.autoContinue = body.enabled !== false;
+    } else if (verb === "auto-continue" || verb === "set-auto-continue") {
+      s.autoContinue = (body.enabled ?? body.autoContinue) !== false;
+      sendJson(res, 200, { ok: true });
+    } else if (verb === "auto-retry-api-error") {
+      s.autoRetryApiError = body.enabled !== false;
+      sendJson(res, 200, { ok: true });
+    } else if (verb === "rename") {
+      const newLabel = String(body.label || "").trim();
+      if (!newLabel) { sendJson(res, 400, { ok: false, reason: "label is required" }); return; }
+      s.label = newLabel;
+      persistSession(s);
       sendJson(res, 200, { ok: true });
     } else {
       sendJson(res, 404, { ok: false, reason: "unknown action" });
