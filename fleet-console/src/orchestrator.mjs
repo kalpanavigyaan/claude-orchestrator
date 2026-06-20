@@ -403,6 +403,7 @@ function sessionRecordObject(s) {
       if (m.input != null) entry.input = m.input;
       return entry;
     }),
+    messageQueue: Array.isArray(s.messageQueue) ? s.messageQueue.slice() : [],
   };
 }
 
@@ -1353,6 +1354,7 @@ function resumeSession(rel) {
     tools: Array.isArray(meta.tools) ? meta.tools : undefined,
     additionalDirectories: Array.isArray(meta.additionalDirectories) ? meta.additionalDirectories : undefined,
     directoryAccess: (meta.directoryAccess && typeof meta.directoryAccess === "object") ? meta.directoryAccess : undefined,
+    messageQueue: Array.isArray(meta.messageQueue) ? meta.messageQueue : undefined,
     sessionDirOverride: dir,
     preload,
     sdkSessionId: meta.sdkSessionId || null,
@@ -1464,6 +1466,7 @@ function handleRunnerEvent(s, event) {
           const next = s.messageQueue.shift();
           recordMessage(s, { role: "system", text: `queue: delivering next instruction (${s.messageQueue.length} remaining)` });
           deliverUserText(s, next);
+          persistSession(s); // save updated queue to disk
         }
       } else if (event.status === "error") {
         s.status = "error";
@@ -2156,6 +2159,7 @@ const server = http.createServer(async (req, res) => {
       if (!text) { sendJson(res, 400, { ok: false, reason: "text is required" }); return; }
       if (!s.messageQueue) s.messageQueue = [];
       s.messageQueue.push(text);
+      persistSession(s);
       sendJson(res, 200, { ok: true, queue: s.messageQueue });
     } else if (verb === "queue-remove") {
       const idx = Number(body.index);
@@ -2163,9 +2167,11 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { ok: false, reason: "invalid index" }); return;
       }
       s.messageQueue.splice(idx, 1);
+      persistSession(s);
       sendJson(res, 200, { ok: true, queue: s.messageQueue });
     } else if (verb === "queue-clear") {
       s.messageQueue = [];
+      persistSession(s);
       sendJson(res, 200, { ok: true });
     } else if (verb === "queue-move") {
       // Reorder: move item from index `from` to `to`
@@ -2174,6 +2180,7 @@ const server = http.createServer(async (req, res) => {
         const [item] = s.messageQueue.splice(from, 1);
         s.messageQueue.splice(to, 0, item);
       }
+      persistSession(s);
       sendJson(res, 200, { ok: true, queue: s.messageQueue ?? [] });
     } else if (verb === "rename") {
       const newLabel = String(body.label || "").trim();
