@@ -65,14 +65,8 @@ const server = new McpServer({
 //   "all"              → register every tool
 //   "a,b,c"            → register exactly those tool names
 const DEFAULT_TOOLS = [
-  "safr",            // router: pick the right strategy per file (no file read)
-  "chunkhound",      // split a file into function/class chunks
-  "region_extract",  // read just the enclosing function/region
-  "symbol_scope",    // definition + usages only
+  "region_extract",  // read just the enclosing function/region (highest ROI: 90% reduction per file read)
   "tds",             // diff hunks ± context instead of whole files
-  "noise_filter",    // strip boilerplate before sending source
-  "log_dedup",       // collapse near-identical log lines
-  "stack_collapse",  // keep app frames, drop stdlib/vendor frames
 ];
 const TOOLS_ENV = (process.env.TOOL_SERVER_TOOLS ?? "").trim().toLowerCase();
 const TOOL_ALLOW: Set<string> | null =
