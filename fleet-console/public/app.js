@@ -1404,6 +1404,7 @@ el("f-create").addEventListener("click", async () => {
     effort: el("f-effort").value,
     thinking: el("f-thinking").value,
     browser: el("f-browser").checked,
+    toolServer: !!(latest && latest.toolServer && latest.toolServer.enabled),
     autoContinue: el("f-autocontinue").checked,
     initialPrompt: el("f-prompt").value,
   };
@@ -1702,8 +1703,7 @@ const TOOL_GROUPS = ["Token", "Logs", "Memory", "AST", "Graph", "Embed"];
 // Curated default selection for new sessions — mirrors the backend DEFAULT_INTEL_TOOLS and the MCP
 // adapter's DEFAULT_TOOLS. High-leverage, zero-setup tools that need no embeddings service.
 const DEFAULT_INTEL_TOOLS = [
-  "safr", "chunkhound", "region_extract", "symbol_scope",
-  "tds", "noise_filter", "log_dedup", "stack_collapse",
+  "region_extract", "tds",
 ];
 
 let lastIntelSig = null;
