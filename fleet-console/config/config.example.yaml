@@ -13,6 +13,14 @@ server:
 sessions:
   dir: "E:/Sessions/Claude"   # where per-session folders (json + markdown + instructions) live
 
+# Global instructions: .md files in this directory are injected into every session's system prompt
+# automatically — Claude follows them from the first token without needing a "read instructions" turn.
+# Default (when omitted): <sessions.dir>/instructions
+# Env override: GLOBAL_INSTRUCTIONS_DIR
+instructions:
+  globalDir: ""               # leave empty to use <sessions.dir>/instructions — injected into system prompt
+  skillsDir: ""               # leave empty to use <sessions.dir>/skills — browsable from the Skills panel
+
 usage:
   pollSeconds: 60         # how often to fetch fresh account usage + reset info (spawns a tiny
                           # throwaway SDK session each time; raise this to reduce overhead)

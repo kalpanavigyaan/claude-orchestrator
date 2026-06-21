@@ -419,6 +419,11 @@ rl.on("line", (line) => {
           .catch((e) => emit({ type: "log", level: "warn", message: `interrupt failed: ${e}` }));
       }
       break;
+    case "compact":
+      // Trigger Claude Code's /compact command to summarize the conversation in-place.
+      // This rewrites the JSONL transcript to a summary, so future resumes load far fewer tokens.
+      prompt.push({ type: "user", message: { role: "user", content: "/compact" } });
+      break;
     case "shutdown":
       prompt.end();
       setTimeout(() => process.exit(0), 200);

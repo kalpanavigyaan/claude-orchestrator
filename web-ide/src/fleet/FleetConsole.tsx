@@ -26,7 +26,9 @@ import ReposPanel       from './ReposPanel';
 import DirectoriesPanel from './DirectoriesPanel';
 import QueuePanel       from './QueuePanel';
 import VMsPanel         from './VMsPanel';
-import RightActivityBar from './RightActivityBar';
+import RightActivityBar     from './RightActivityBar';
+import SkillsPanel          from './SkillsPanel';
+import InstructionsLibPanel from './InstructionsLibPanel';
 import NewSessionModal   from './NewSessionModal';
 import { ApprovalModal }     from './ApprovalModal';
 import InstructionsModal from './InstructionsModal';
@@ -54,6 +56,8 @@ const PANEL_ACCENT: Record<RightPanel, string> = {
   repos:        '#e5c07b',  // gold
   directories:  '#56b6c2',  // cyan
   queue:        '#f97316',  // orange
+  skills:       '#38bdf8',  // sky blue
+  instructions: '#a78bfa',  // violet
 };
 
 const LS_SIDEBAR_W   = 'fleet-sidebar-w';
@@ -567,6 +571,8 @@ export function FleetConsole({ onSwitchToEditor }: { onSwitchToEditor?: () => vo
             {rightPanel === 'repos' && 'Repositories'}
             {rightPanel === 'directories' && 'Directories'}
             {rightPanel === 'queue' && 'Instruction Queue'}
+            {rightPanel === 'skills' && 'Skills Library'}
+            {rightPanel === 'instructions' && 'Instructions'}
           </div>
 
           <div style={{ flex: 1, overflow: 'auto' }}>
@@ -596,6 +602,12 @@ export function FleetConsole({ onSwitchToEditor }: { onSwitchToEditor?: () => vo
               <QueuePanel session={selectedSession} />
             )}
             {rightPanel === 'vms' && <VMsPanel />}
+            {rightPanel === 'skills' && (
+              <SkillsPanel selectedId={selectedId} />
+            )}
+            {rightPanel === 'instructions' && (
+              <InstructionsLibPanel selectedId={selectedId} session={selectedSession} />
+            )}
           </div>
 
           {/* Right sidebar resize (left edge) */}

@@ -18,6 +18,9 @@ const DEFAULTS = {
   sessions: { dir: "E:/Sessions/Claude" },
   usage: { pollSeconds: 60 },
   continue: { bufferSeconds: 30, minIntervalSeconds: 300 },
+  // Global instructions dir: .md files here are read and injected into every session's system prompt.
+  // Default is <sessions.dir>/instructions — create it and add .md files; no restart needed.
+  instructions: { globalDir: "" },
   // Local roots scanned for the Repositories panel (Windows host); WSL repos come from running distros.
   repos: { localRoots: ["E:/GitHub"], maxDepth: 3 },
   // Browser / UI testing toolset (Playwright MCP). Default for new sessions; toggle per-session in the UI.
@@ -158,6 +161,10 @@ function applyEnv(cfg) {
   if (envNum(process.env.UNATTENDED_MAX_TURNS) !== undefined) cfg.unattended.maxTurns = envNum(process.env.UNATTENDED_MAX_TURNS);
   if (process.env.UNATTENDED_MODEL) cfg.unattended.model = process.env.UNATTENDED_MODEL;
   if (process.env.UNATTENDED_PARTIAL_MESSAGES) cfg.unattended.partialMessages = /^(1|true|yes|on)$/i.test(process.env.UNATTENDED_PARTIAL_MESSAGES);
+  if (process.env.GLOBAL_INSTRUCTIONS_DIR) {
+    if (!cfg.instructions) cfg.instructions = {};
+    cfg.instructions.globalDir = process.env.GLOBAL_INSTRUCTIONS_DIR;
+  }
   return cfg;
 }
 

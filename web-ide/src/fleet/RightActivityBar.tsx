@@ -1,5 +1,5 @@
 import React from 'react';
-import { BarChart2, Monitor, Cpu, Terminal, GitBranch, Folder, ListOrdered } from 'lucide-react';
+import { BarChart2, Monitor, Cpu, Terminal, GitBranch, Folder, ListOrdered, Wand2, ScrollText } from 'lucide-react';
 import type { RightPanel } from './types';
 
 interface Props {
@@ -15,6 +15,8 @@ const BUTTONS: { panel: RightPanel; icon: React.ReactNode; title: string; color:
   { panel: 'repos',        icon: <GitBranch    size={20} strokeWidth={1.5} />, title: 'Repositories',            color: '#e5c07b' },
   { panel: 'directories',  icon: <Folder       size={20} strokeWidth={1.5} />, title: 'Directories',             color: '#56b6c2' },
   { panel: 'queue',        icon: <ListOrdered  size={20} strokeWidth={1.5} />, title: 'Instruction Queue',       color: '#f97316' },
+  { panel: 'skills',       icon: <Wand2        size={20} strokeWidth={1.5} />, title: 'Skills Library',          color: '#38bdf8' },
+  { panel: 'instructions', icon: <ScrollText   size={20} strokeWidth={1.5} />, title: 'Instructions',            color: '#a78bfa' },
 ];
 
 export default function RightActivityBar({ activePanel, onPanelChange }: Props) {
