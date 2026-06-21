@@ -165,6 +165,7 @@ mark{background:rgba(234,179,8,.3);color:inherit;border-radius:2px}
 .fc-dot.error{background:#f87171}
 .fc-dot.idle,.fc-dot.done{background:#6a737d}
 @keyframes fc-pulse{0%,100%{opacity:.5}50%{opacity:1}}
+@keyframes fleet-spin{to{transform:rotate(360deg)}}
 .fc-session-item{padding:6px 8px;cursor:pointer;border-left:2px solid transparent}
 .fc-session-item:hover{background:var(--sb-hover)}
 .fc-session-item.selected{background:var(--sb-focus);border-left-color:var(--accent)}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { apiPost } from '../fleet/api';
 import type { Session } from '../fleet/types';
 
@@ -27,6 +27,11 @@ type Tab = 'config' | 'dirs' | 'actions';
 export default function ControlsPane({ session, models, onHistoryResume, viewingHistoryRel }: Props) {
   const [newDir, setNewDir] = useState('');
   const [tab, setTab] = useState<Tab>('config');
+  const [compacting, setCompacting] = useState(false);
+
+  useEffect(() => {
+    if (session?.status === 'idle' || session?.status === 'error') setCompacting(false);
+  }, [session?.status]);
 
   async function resumeHistory() {
     if (!viewingHistoryRel) return;
@@ -81,6 +86,7 @@ export default function ControlsPane({ session, models, onHistoryResume, viewing
     await apiPost(`/api/sessions/${id}/auto-compact`, { enabled: s.autoCompact ?? false, threshold: parseFloat(e.target.value) });
   }
   async function compactNow() {
+    setCompacting(true);
     await apiPost(`/api/sessions/${id}/compact`, {});
   }
   async function removeDir(dir: string) {
@@ -247,7 +253,11 @@ export default function ControlsPane({ session, models, onHistoryResume, viewing
 
         {tab === 'actions' && (
           <div style={{ padding: '8px 8px 12px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <button onClick={compactNow} className="fleet-action-btn" style={{ background: 'rgba(251,191,36,.08)', color: '#fbbf24', borderColor: 'rgba(251,191,36,.2)' }}>🗜 Compact now</button>
+            <button onClick={compactNow} disabled={compacting} className="fleet-action-btn" style={{ background: 'rgba(251,191,36,.08)', color: '#fbbf24', borderColor: 'rgba(251,191,36,.2)', display: 'flex', alignItems: 'center', gap: 6, opacity: compacting ? 0.8 : 1 }}>
+              {compacting
+                ? <><span style={{ display: 'inline-block', width: 11, height: 11, border: '2px solid #fbbf2466', borderTopColor: '#fbbf24', borderRadius: '50%', animation: 'fleet-spin 0.7s linear infinite', flexShrink: 0 }} /> Compacting…</>
+                : <>🗜 Compact now</>}
+            </button>
             <button onClick={continueSession} className="fleet-action-btn primary">▶ Continue</button>
             <button onClick={stopTask} className="fleet-action-btn danger">⏹ Stop task</button>
             <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
