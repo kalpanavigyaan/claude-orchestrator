@@ -130,12 +130,48 @@ $env:PORT = "$Port"
 
 $displayHost = if ($BindHost -eq "0.0.0.0") { "<host-ip>" } else { $BindHost }
 $tokenSuffix = if ($Token) { "/?token=$Token" } else { "" }
+
+# ── Web-IDE (React UI) ────────────────────────────────────────────────────────
+# If web-ide/dist/ exists, start vite preview on $WebIdePort in the background.
+$WebIdePort = 5174
+$WebIdeDist = Join-Path $RepositoryRoot "web-ide\dist\index.html"
+$WebIdeJob  = $null
+if (Test-Path $WebIdeDist) {
+    # Kill anything already on $WebIdePort
+    $prev = Get-NetTCPConnection -LocalPort $WebIdePort -State Listen -ErrorAction SilentlyContinue
+    foreach ($p in ($prev | Select-Object -ExpandProperty OwningProcess -Unique)) {
+        try { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue } catch {}
+    }
+    $WebIdeJob = Start-Job -ScriptBlock {
+        param($root, $port)
+        Set-Location (Join-Path $root "web-ide")
+        npx vite preview --port $port --strictPort 2>&1
+    } -ArgumentList $RepositoryRoot, $WebIdePort
+    Start-Sleep -Milliseconds 800
+} else {
+    Write-Host "  web-ide/dist/ not found — run .\scripts\build-ui.ps1 first for the React UI." -ForegroundColor Yellow
+}
+
 Write-Host ""
-Write-Host "Starting Fleet Console (fresh) at http://${displayHost}:${Port}${tokenSuffix}" -ForegroundColor Cyan
+Write-Host "┌─ Fleet Console ─────────────────────────────────────────────┐" -ForegroundColor Cyan
+Write-Host "│  API + vanilla UI : http://${displayHost}:${Port}${tokenSuffix}" -ForegroundColor Cyan
+if ($WebIdeJob) {
+    Write-Host "│  React UI (web-ide): http://localhost:${WebIdePort}" -ForegroundColor Green
+} else {
+    Write-Host "│  React UI (web-ide): NOT running  →  run build-ui.ps1 -Serve" -ForegroundColor Yellow
+}
+Write-Host "└─────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 if (-not $Token -and $BindHost -eq "0.0.0.0") {
     Write-Warning "Bound to 0.0.0.0 without a token. Anyone on the network can drive your agents. Use -Token."
 }
-Write-Host "Press Ctrl+C to stop."
+Write-Host "Press Ctrl+C to stop both servers." -ForegroundColor DarkGray
 Write-Host ""
 
-node src/orchestrator.mjs
+try {
+    node src/orchestrator.mjs
+} finally {
+    if ($WebIdeJob) {
+        Stop-Job  $WebIdeJob -ErrorAction SilentlyContinue
+        Remove-Job $WebIdeJob -ErrorAction SilentlyContinue
+    }
+}
