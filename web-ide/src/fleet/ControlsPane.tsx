@@ -92,6 +92,18 @@ export default function ControlsPane({ session, models, onHistoryResume, viewing
     await apiPost(`/api/sessions/${id}/auto-retry-api-error`, { enabled: e.target.checked });
   }
 
+  async function toggleAutoCompact(e: React.ChangeEvent<HTMLInputElement>) {
+    await apiPost(`/api/sessions/${id}/auto-compact`, { enabled: e.target.checked, threshold: session?.autoCompactThreshold ?? 0.65 });
+  }
+
+  async function setAutoCompactThreshold(e: React.ChangeEvent<HTMLSelectElement>) {
+    await apiPost(`/api/sessions/${id}/auto-compact`, { enabled: session?.autoCompact ?? false, threshold: parseFloat(e.target.value) });
+  }
+
+  async function compactNow() {
+    await apiPost(`/api/sessions/${id}/compact`, {});
+  }
+
   async function removeDir(dir: string) {
     if (!session) return;
     const dirs = (session.additionalDirectories ?? []).filter(d => d !== dir);
@@ -172,6 +184,27 @@ export default function ControlsPane({ session, models, onHistoryResume, viewing
           <input type="checkbox" checked={session.autoRetryApiError !== false} onChange={toggleAutoRetryApiError} style={{ accentColor: 'var(--accent)' }} />
           Auto-retry API rate limit errors
         </label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '3px 0' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, cursor: 'pointer', flex: 1 }}>
+            <input type="checkbox" checked={!!session.autoCompact} onChange={toggleAutoCompact} style={{ accentColor: '#fbbf24' }} />
+            Auto-compact at
+          </label>
+          <select
+            value={String(session.autoCompactThreshold ?? 0.65)}
+            onChange={setAutoCompactThreshold}
+            disabled={!session.autoCompact}
+            className="fleet-control-input"
+            style={{ width: 60, fontSize: 11, opacity: session.autoCompact ? 1 : 0.4 }}
+          >
+            <option value="0.40">40%</option>
+            <option value="0.50">50%</option>
+            <option value="0.60">60%</option>
+            <option value="0.65">65%</option>
+            <option value="0.70">70%</option>
+            <option value="0.75">75%</option>
+            <option value="0.80">80%</option>
+          </select>
+        </div>
       </div>
 
       {/* Directories */}
@@ -198,6 +231,7 @@ export default function ControlsPane({ session, models, onHistoryResume, viewing
       {/* Action buttons */}
       <div className="fleet-control-actions">
         <button onClick={() => window.dispatchEvent(new CustomEvent('fleet:open-instructions'))} className="fleet-action-btn">📄 Instructions</button>
+        <button onClick={compactNow} className="fleet-action-btn" title="Compact context now">🗜 Compact now</button>
         <button onClick={stopTask} className="fleet-action-btn danger">⏹ Stop current task</button>
         <button onClick={continueSession} className="fleet-action-btn primary">▶ Continue</button>
         <button onClick={restartRunner} className="fleet-action-btn">🔄 Restart runner</button>

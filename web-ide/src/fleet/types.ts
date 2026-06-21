@@ -14,6 +14,8 @@ export interface Session {
   browser?: boolean;
   autoContinue?: boolean;
   autoRetryApiError?: boolean;
+  autoCompact?: boolean;
+  autoCompactThreshold?: number;
   toolServer?: boolean;
   tools?: string[];
   additionalDirectories?: string[];

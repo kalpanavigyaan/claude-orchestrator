@@ -124,6 +124,8 @@ function safeSegment(value, fallback = "session") {
 const sessions = new Map();
 /** Fleet-level SSE subscribers. */
 const fleetSse = new Set();
+// Session IDs with a pending auto-compact (prevents repeated triggers until context drops).
+const compactPending = new Set();
 let manualAccountReset = null;
 /**
  * Latest account-wide plan usage, from the SDK's /usage data (same across sessions/devices). Keyed
@@ -228,6 +230,8 @@ function sessionSummary(s) {
     lastContinueAt: s.lastContinueAt,
     autoContinue: s.autoContinue,
     autoRetryApiError: s.autoRetryApiError,
+    autoCompact: s.autoCompact ?? false,
+    autoCompactThreshold: typeof s.autoCompactThreshold === 'number' ? s.autoCompactThreshold : 0.65,
     messageQueue: s.messageQueue ?? [],
     queueMode: s.queueMode || 'same',
     completedCount: Array.isArray(s.completedInstructions) ? s.completedInstructions.length : 0,
@@ -423,6 +427,8 @@ function sessionRecordObject(s) {
     messageQueue: Array.isArray(s.messageQueue) ? s.messageQueue.slice() : [],
     completedInstructions: Array.isArray(s.completedInstructions) ? s.completedInstructions.slice() : [],
     queueMode: s.queueMode || 'same',
+    autoCompact: !!s.autoCompact,
+    autoCompactThreshold: typeof s.autoCompactThreshold === 'number' ? s.autoCompactThreshold : 0.65,
   };
 }
 
@@ -1351,6 +1357,10 @@ function createSession(spec) {
       : Object.fromEntries((Array.isArray(spec.additionalDirectories) ? spec.additionalDirectories : []).map((d) => [String(d), "read"])),
     autoContinue: spec.autoContinue !== false,
     autoRetryApiError: spec.autoRetryApiError !== false,
+    autoCompact: spec.autoCompact === true,
+    autoCompactThreshold: typeof spec.autoCompactThreshold === 'number'
+      ? Math.min(Math.max(spec.autoCompactThreshold, 0.30), 0.95)
+      : 0.65,
     messageQueue: Array.isArray(spec.messageQueue) ? spec.messageQueue.slice() : [],
     completedInstructions: Array.isArray(spec.completedInstructions) ? spec.completedInstructions.slice() : [],
     queueMode: spec.queueMode === 'fresh' ? 'fresh' : 'same',
@@ -1450,6 +1460,8 @@ function resumeSession(rel) {
     messageQueue: Array.isArray(meta.messageQueue) ? meta.messageQueue : undefined,
     completedInstructions: Array.isArray(meta.completedInstructions) ? meta.completedInstructions : undefined,
     queueMode: meta.queueMode || undefined,
+    autoCompact: meta.autoCompact === true ? true : undefined,
+    autoCompactThreshold: typeof meta.autoCompactThreshold === 'number' ? meta.autoCompactThreshold : undefined,
     sessionDirOverride: dir,
     preload,
     sdkSessionId: meta.sdkSessionId || null,
@@ -1691,8 +1703,22 @@ function handleRunnerEvent(s, event) {
       s.activity = null;
       // Always record a result message so the per-turn token stats are always visible.
       recordMessage(s, { role: "result", text: event.resultText || "", turnUsage, turnCost, turns: event.turns });
-      // Auto-compact removed: was calling Claude to summarize itself (phantom token burn).
-      // The ContextBar in the UI now warns when context is large; user decides when to compact.
+
+      // Auto-compact: if enabled, trigger /compact when context exceeds the threshold.
+      // Uses the per-turn cache_read delta as a proxy for current context window usage —
+      // the same value the ContextBar in the UI displays.
+      if (s.autoCompact && turnUsage) {
+        const ctxPct = ((turnUsage.input_tokens || 0) + (turnUsage.cache_read_input_tokens || 0)) / 200000;
+        const threshold = typeof s.autoCompactThreshold === 'number' ? s.autoCompactThreshold : 0.65;
+        if (ctxPct >= threshold && !compactPending.has(s.id)) {
+          compactPending.add(s.id);
+          recordMessage(s, { role: "system", text: `auto-compact: context at ${Math.round(ctxPct * 100)}% ≥ ${Math.round(threshold * 100)}% threshold — compressing…` });
+          deliverCompact(s);
+        } else if (ctxPct < threshold * 0.5) {
+          // Context has dropped (post-compact or new session) — re-arm the trigger.
+          compactPending.delete(s.id);
+        }
+      }
       break;
     }
     case "rate_limit":
@@ -2309,6 +2335,19 @@ const server = http.createServer(async (req, res) => {
     } else if (verb === "auto-retry-api-error") {
       s.autoRetryApiError = body.enabled !== false;
       sendJson(res, 200, { ok: true });
+    } else if (verb === "auto-compact") {
+      s.autoCompact = body.enabled !== false;
+      if (typeof body.threshold === 'number') {
+        s.autoCompactThreshold = Math.min(Math.max(body.threshold, 0.30), 0.95);
+      }
+      compactPending.delete(s.id); // re-arm with new settings
+      persistSession(s);
+      sendJson(res, 200, { ok: true });
+    } else if (verb === "compact") {
+      // Manual compact trigger from the UI.
+      const ok = deliverCompact(s);
+      if (ok) { persistSession(s); broadcastFleet(); }
+      sendJson(res, 200, { ok });
     } else if (verb === "queue-add") {
       const text = String(body.text || "").trim();
       if (!text) { sendJson(res, 400, { ok: false, reason: "text is required" }); return; }
