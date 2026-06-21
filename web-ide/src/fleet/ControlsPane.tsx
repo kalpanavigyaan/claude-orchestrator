@@ -9,17 +9,6 @@ interface Props {
   viewingHistoryRel?: string | null;
 }
 
-const inputStyle: React.CSSProperties = {
-  background: 'var(--in-bg, var(--ed-bg))',
-  border: '1px solid var(--in-border, var(--border))',
-  color: 'var(--in-fg, var(--sb-fg))',
-  borderRadius: 2,
-  padding: '3px 6px',
-  width: '100%',
-  fontSize: 12,
-  boxSizing: 'border-box',
-};
-
 const btnStyle: React.CSSProperties = {
   background: 'var(--btn-2nd, rgba(255,255,255,.08))',
   color: 'var(--ed-fg, var(--sb-fg))',
@@ -33,12 +22,11 @@ const btnStyle: React.CSSProperties = {
   marginBottom: 2,
 };
 
-const dangerBtn: React.CSSProperties = { ...btnStyle, color: 'var(--red)' };
-const labelStyle: React.CSSProperties = { fontSize: 11, color: 'var(--muted)', marginBottom: 2, display: 'block' };
-const rowStyle: React.CSSProperties = { marginBottom: 6 };
+type Tab = 'config' | 'dirs' | 'actions';
 
 export default function ControlsPane({ session, models, onHistoryResume, viewingHistoryRel }: Props) {
   const [newDir, setNewDir] = useState('');
+  const [tab, setTab] = useState<Tab>('config');
 
   async function resumeHistory() {
     if (!viewingHistoryRel) return;
@@ -63,179 +51,212 @@ export default function ControlsPane({ session, models, onHistoryResume, viewing
   }
 
   const id = session.id;
+  const s = session;
 
   async function setMode(e: React.ChangeEvent<HTMLSelectElement>) {
     await apiPost(`/api/sessions/${id}/set-mode`, { mode: e.target.value });
   }
-
   async function setModel(e: React.ChangeEvent<HTMLSelectElement>) {
     await apiPost(`/api/sessions/${id}/set-model`, { model: e.target.value });
   }
-
   async function setEffort(e: React.ChangeEvent<HTMLSelectElement>) {
     await apiPost(`/api/sessions/${id}/set-effort`, { effort: e.target.value });
   }
-
   async function setThinking(e: React.ChangeEvent<HTMLSelectElement>) {
     await apiPost(`/api/sessions/${id}/set-thinking`, { thinking: e.target.value });
   }
-
   async function toggleBrowser(e: React.ChangeEvent<HTMLInputElement>) {
     await apiPost(`/api/sessions/${id}/set-browser`, { browser: e.target.checked });
   }
-
   async function toggleAutoContinue(e: React.ChangeEvent<HTMLInputElement>) {
     await apiPost(`/api/sessions/${id}/auto-continue`, { enabled: e.target.checked });
   }
-
   async function toggleAutoRetryApiError(e: React.ChangeEvent<HTMLInputElement>) {
     await apiPost(`/api/sessions/${id}/auto-retry-api-error`, { enabled: e.target.checked });
   }
-
   async function toggleAutoCompact(e: React.ChangeEvent<HTMLInputElement>) {
-    await apiPost(`/api/sessions/${id}/auto-compact`, { enabled: e.target.checked, threshold: session?.autoCompactThreshold ?? 0.65 });
+    await apiPost(`/api/sessions/${id}/auto-compact`, { enabled: e.target.checked, threshold: s.autoCompactThreshold ?? 0.65 });
   }
-
   async function setAutoCompactThreshold(e: React.ChangeEvent<HTMLSelectElement>) {
-    await apiPost(`/api/sessions/${id}/auto-compact`, { enabled: session?.autoCompact ?? false, threshold: parseFloat(e.target.value) });
+    await apiPost(`/api/sessions/${id}/auto-compact`, { enabled: s.autoCompact ?? false, threshold: parseFloat(e.target.value) });
   }
-
   async function compactNow() {
     await apiPost(`/api/sessions/${id}/compact`, {});
   }
-
   async function removeDir(dir: string) {
-    if (!session) return;
-    const dirs = (session.additionalDirectories ?? []).filter(d => d !== dir);
+    const dirs = (s.additionalDirectories ?? []).filter(d => d !== dir);
     await apiPost(`/api/sessions/${id}/set-directories`, { directories: dirs });
   }
-
   async function addDir() {
-    if (!newDir.trim() || !session) return;
-    const dirs = [...(session.additionalDirectories ?? []), newDir.trim()];
+    if (!newDir.trim()) return;
+    const dirs = [...(s.additionalDirectories ?? []), newDir.trim()];
     await apiPost(`/api/sessions/${id}/set-directories`, { directories: dirs });
     setNewDir('');
   }
-
   async function stopTask() {
     await apiPost(`/api/sessions/${id}/interrupt`, {});
   }
-
   async function continueSession() {
     await apiPost(`/api/sessions/${id}/continue`, {});
   }
-
   async function restartRunner() {
     await apiPost(`/api/sessions/${id}/restart`, {});
   }
-
   async function endSession() {
     if (!window.confirm('End this session?')) return;
     await apiPost(`/api/sessions/${id}/stop`, {});
   }
 
+  const tabs: { key: Tab; label: string }[] = [
+    { key: 'config', label: 'Config' },
+    { key: 'dirs', label: 'Dirs' },
+    { key: 'actions', label: 'Actions' },
+  ];
+
   return (
-    <div className="fleet-scroll" style={{ fontSize: 12, color: 'var(--sb-fg)', borderTop: '1px solid var(--border)' }}>
-      {/* Settings section */}
-      <div className="fleet-section">
-        <div className="fleet-section-title">Configuration</div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '5px 8px', alignItems: 'center', marginBottom: 8 }}>
-          <span style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.05em' }}>Mode</span>
-          <select value={session.mode ?? 'default'} onChange={setMode} className="fleet-control-input">
-            <option value="bypassPermissions">Auto full access</option>
-            <option value="acceptEdits">Auto-accept edits</option>
-            <option value="default">Ask before edits</option>
-            <option value="plan">Plan read-only</option>
-          </select>
-
-          <span style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.05em' }}>Model</span>
-          <select value={session.model ?? ''} onChange={setModel} className="fleet-control-input">
-            <option value="">Default</option>
-            {models.map(m => <option key={m.value} value={m.value}>{m.displayName ?? m.value}</option>)}
-          </select>
-
-          <span style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.05em' }}>Effort</span>
-          <select value={session.effort ?? 'default'} onChange={setEffort} className="fleet-control-input">
-            <option value="default">Default</option>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-            <option value="xhigh">Extra high</option>
-            <option value="max">Max</option>
-          </select>
-
-          <span style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.05em' }}>Thinking</span>
-          <select value={session.thinking ?? 'adaptive'} onChange={setThinking} className="fleet-control-input">
-            <option value="adaptive">Adaptive</option>
-            <option value="off">Off</option>
-          </select>
-        </div>
-
-        <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, cursor: 'pointer', marginBottom: 4, padding: '3px 0' }}>
-          <input type="checkbox" checked={!!session.browser} onChange={toggleBrowser} style={{ accentColor: 'var(--accent)' }} />
-          Enable Playwright browser
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, cursor: 'pointer', padding: '3px 0' }}>
-          <input type="checkbox" checked={!!session.autoContinue} onChange={toggleAutoContinue} style={{ accentColor: 'var(--accent)' }} />
-          Auto-continue after 5h reset
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, cursor: 'pointer', padding: '3px 0' }}>
-          <input type="checkbox" checked={session.autoRetryApiError !== false} onChange={toggleAutoRetryApiError} style={{ accentColor: 'var(--accent)' }} />
-          Auto-retry API rate limit errors
-        </label>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '3px 0' }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, cursor: 'pointer', flex: 1 }}>
-            <input type="checkbox" checked={!!session.autoCompact} onChange={toggleAutoCompact} style={{ accentColor: '#fbbf24' }} />
-            Auto-compact at
-          </label>
-          <select
-            value={String(session.autoCompactThreshold ?? 0.65)}
-            onChange={setAutoCompactThreshold}
-            disabled={!session.autoCompact}
-            className="fleet-control-input"
-            style={{ width: 60, fontSize: 11, opacity: session.autoCompact ? 1 : 0.4 }}
+    <div style={{ display: 'flex', flexDirection: 'column', fontSize: 12, color: 'var(--sb-fg)', borderTop: '1px solid var(--border)', height: '100%' }}>
+      {/* Tab bar */}
+      <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+        {tabs.map(t => (
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            style={{
+              flex: 1,
+              background: 'none',
+              border: 'none',
+              borderBottom: tab === t.key ? '2px solid var(--accent)' : '2px solid transparent',
+              color: tab === t.key ? 'var(--accent)' : 'var(--muted)',
+              padding: '5px 4px',
+              fontSize: 11,
+              fontWeight: tab === t.key ? 600 : 400,
+              cursor: 'pointer',
+              letterSpacing: '.03em',
+            }}
           >
-            <option value="0.40">40%</option>
-            <option value="0.50">50%</option>
-            <option value="0.60">60%</option>
-            <option value="0.65">65%</option>
-            <option value="0.70">70%</option>
-            <option value="0.75">75%</option>
-            <option value="0.80">80%</option>
-          </select>
-        </div>
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      {/* Directories */}
-      <div className="fleet-section">
-        <div className="fleet-section-title">Directories</div>
-        {session.cwd && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 3, padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,.04)' }}>
-            <span style={{ fontSize: 9, background: 'rgba(0,122,204,.2)', color: 'var(--cyan)', padding: '1px 5px', borderRadius: 3, flexShrink: 0 }}>cwd</span>
-            <span style={{ flex: 1, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'monospace', color: 'var(--cyan)', opacity: .8 }} title={session.cwd}>{session.cwd}</span>
+      {/* Tab content */}
+      <div className="fleet-scroll" style={{ flex: 1, overflow: 'auto' }}>
+
+        {tab === 'config' && (
+          <div style={{ padding: '8px 8px 12px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '5px 8px', alignItems: 'center', marginBottom: 10 }}>
+              <span style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.05em' }}>Mode</span>
+              <select value={session.mode ?? 'default'} onChange={setMode} className="fleet-control-input">
+                <option value="bypassPermissions">Auto full access</option>
+                <option value="acceptEdits">Auto-accept edits</option>
+                <option value="default">Ask before edits</option>
+                <option value="plan">Plan read-only</option>
+              </select>
+
+              <span style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.05em' }}>Model</span>
+              <select value={session.model ?? ''} onChange={setModel} className="fleet-control-input">
+                <option value="">Default</option>
+                {models.map(m => <option key={m.value} value={m.value}>{m.displayName ?? m.value}</option>)}
+              </select>
+
+              <span style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.05em' }}>Effort</span>
+              <select value={session.effort ?? 'default'} onChange={setEffort} className="fleet-control-input">
+                <option value="default">Default</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="xhigh">Extra high</option>
+                <option value="max">Max</option>
+              </select>
+
+              <span style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.05em' }}>Thinking</span>
+              <select value={session.thinking ?? 'adaptive'} onChange={setThinking} className="fleet-control-input">
+                <option value="adaptive">Adaptive</option>
+                <option value="off">Off</option>
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', padding: '4px 0' }}>
+                <input type="checkbox" checked={!!session.browser} onChange={toggleBrowser} style={{ accentColor: 'var(--accent)' }} />
+                Enable Playwright browser
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', padding: '4px 0' }}>
+                <input type="checkbox" checked={!!session.autoContinue} onChange={toggleAutoContinue} style={{ accentColor: 'var(--accent)' }} />
+                Auto-continue after 5h reset
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', padding: '4px 0' }}>
+                <input type="checkbox" checked={session.autoRetryApiError !== false} onChange={toggleAutoRetryApiError} style={{ accentColor: 'var(--accent)' }} />
+                Auto-retry API rate limit errors
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', flex: 1 }}>
+                  <input type="checkbox" checked={!!session.autoCompact} onChange={toggleAutoCompact} style={{ accentColor: '#fbbf24' }} />
+                  Auto-compact at
+                </label>
+                <select
+                  value={String(session.autoCompactThreshold ?? 0.65)}
+                  onChange={setAutoCompactThreshold}
+                  disabled={!session.autoCompact}
+                  className="fleet-control-input"
+                  style={{ width: 60, fontSize: 11, opacity: session.autoCompact ? 1 : 0.4 }}
+                >
+                  <option value="0.40">40%</option>
+                  <option value="0.50">50%</option>
+                  <option value="0.60">60%</option>
+                  <option value="0.65">65%</option>
+                  <option value="0.70">70%</option>
+                  <option value="0.75">75%</option>
+                  <option value="0.80">80%</option>
+                </select>
+              </div>
+            </div>
           </div>
         )}
-        {(session.additionalDirectories ?? []).map(dir => (
-          <div key={dir} style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2, padding: '2px 0' }}>
-            <span style={{ flex: 1, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'monospace', opacity: .7 }} title={dir}>{dir}</span>
-            <button onClick={() => removeDir(dir)} title="Remove" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red)', padding: '0 2px', fontSize: 12 }}>✕</button>
-          </div>
-        ))}
-        <div style={{ display: 'flex', gap: 5, marginTop: 6 }}>
-          <input value={newDir} onChange={e => setNewDir(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addDir(); } }} placeholder="Add directory…" className="fleet-control-input" style={{ flex: 1, fontSize: 11 }} />
-          <button onClick={addDir} className="fleet-action-btn primary" style={{ width: 'auto', padding: '4px 10px' }}>Add</button>
-        </div>
-      </div>
 
-      {/* Action buttons */}
-      <div className="fleet-control-actions">
-        <button onClick={() => window.dispatchEvent(new CustomEvent('fleet:open-instructions'))} className="fleet-action-btn">📄 Instructions</button>
-        <button onClick={compactNow} className="fleet-action-btn" title="Compact context now">🗜 Compact now</button>
-        <button onClick={stopTask} className="fleet-action-btn danger">⏹ Stop current task</button>
-        <button onClick={continueSession} className="fleet-action-btn primary">▶ Continue</button>
-        <button onClick={restartRunner} className="fleet-action-btn">🔄 Restart runner</button>
-        <button onClick={endSession} className="fleet-action-btn danger">⏏ End session</button>
+        {tab === 'dirs' && (
+          <div style={{ padding: '8px 8px 12px' }}>
+            {session.cwd && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4, padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,.06)' }}>
+                <span style={{ fontSize: 9, background: 'rgba(0,122,204,.2)', color: 'var(--cyan)', padding: '1px 5px', borderRadius: 3, flexShrink: 0 }}>cwd</span>
+                <span style={{ flex: 1, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'monospace', color: 'var(--cyan)', opacity: .85 }} title={session.cwd}>{session.cwd}</span>
+              </div>
+            )}
+            {(session.additionalDirectories ?? []).length === 0 && (
+              <div style={{ color: 'var(--muted)', fontSize: 11, fontStyle: 'italic', marginBottom: 8 }}>No additional directories.</div>
+            )}
+            {(session.additionalDirectories ?? []).map(dir => (
+              <div key={dir} style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 3, padding: '2px 0' }}>
+                <span style={{ flex: 1, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'monospace', opacity: .75 }} title={dir}>{dir}</span>
+                <button onClick={() => removeDir(dir)} title="Remove" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red)', padding: '0 3px', fontSize: 13, lineHeight: 1 }}>✕</button>
+              </div>
+            ))}
+            <div style={{ display: 'flex', gap: 5, marginTop: 8 }}>
+              <input
+                value={newDir}
+                onChange={e => setNewDir(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addDir(); } }}
+                placeholder="Add directory…"
+                className="fleet-control-input"
+                style={{ flex: 1, fontSize: 11 }}
+              />
+              <button onClick={addDir} className="fleet-action-btn primary" style={{ width: 'auto', padding: '4px 10px' }}>Add</button>
+            </div>
+          </div>
+        )}
+
+        {tab === 'actions' && (
+          <div style={{ padding: '8px 8px 12px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <button onClick={compactNow} className="fleet-action-btn" style={{ background: 'rgba(251,191,36,.08)', color: '#fbbf24', borderColor: 'rgba(251,191,36,.2)' }}>🗜 Compact now</button>
+            <button onClick={continueSession} className="fleet-action-btn primary">▶ Continue</button>
+            <button onClick={stopTask} className="fleet-action-btn danger">⏹ Stop task</button>
+            <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
+            <button onClick={() => window.dispatchEvent(new CustomEvent('fleet:open-instructions'))} className="fleet-action-btn">📄 Instructions</button>
+            <button onClick={restartRunner} className="fleet-action-btn">🔄 Restart runner</button>
+            <button onClick={endSession} className="fleet-action-btn danger">⏏ End session</button>
+          </div>
+        )}
+
       </div>
     </div>
   );
