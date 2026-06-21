@@ -47,24 +47,37 @@ interface CtxMenu { x: number; y: number; session: HistorySession; }
 export default function HistoryPane({ onSelectHistory, onResume, onRename }: Props) {
   const [sessions, setSessions]     = useState<HistorySession[]>([]);
   const [filter, setFilter]         = useState('');
-  const [expanded, setExpanded]     = useState<Set<string>>(new Set(['Today', 'Yesterday']));
+  // Expand all groups by default so sessions are visible regardless of age
+  const [expanded, setExpanded]     = useState<Set<string>>(new Set(GROUP_ORDER));
   const [loading, setLoading]       = useState(false);
+  const [fetchError, setFetchError] = useState(false);
   const [selectedRel, setSelectedRel] = useState<string | null>(null);
   const [renamingRel, setRenamingRel] = useState<string | null>(null);
   const [renameVal, setRenameVal]     = useState('');
   const [ctxMenu, setCtxMenu]         = useState<CtxMenu | null>(null);
   const renameRef = useRef<HTMLInputElement>(null);
+  const retryRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadHistory = useCallback(async () => {
     setLoading(true);
-    const data = await apiGet('/api/history');
+    setFetchError(false);
+    const data = await apiGet('/api/history', 8000);
     setLoading(false);
     if (data && Array.isArray(data.sessions)) {
       setSessions(data.sessions as HistorySession[]);
+      setFetchError(false);
+      if (retryRef.current) { clearTimeout(retryRef.current); retryRef.current = null; }
+    } else {
+      // Fleet-console not ready yet (just restarted) — retry automatically
+      setFetchError(true);
+      retryRef.current = setTimeout(loadHistory, 3000);
     }
   }, []);
 
-  useEffect(() => { loadHistory(); }, [loadHistory]);
+  useEffect(() => {
+    loadHistory();
+    return () => { if (retryRef.current) clearTimeout(retryRef.current); };
+  }, [loadHistory]);
 
   // Close context menu on outside click
   useEffect(() => {
@@ -112,7 +125,7 @@ export default function HistoryPane({ onSelectHistory, onResume, onRename }: Pro
 
   const dateMap = new Map<string, HistorySession[]>();
   for (const s of filtered) {
-    const ts = (s as any).createdAt ?? (s as any).mtime ?? null;
+    const ts = s.createdAt ?? s.mtime ?? null;
     const d = dateGroup(ts);
     if (!dateMap.has(d)) dateMap.set(d, []);
     dateMap.get(d)!.push(s);
@@ -166,7 +179,20 @@ export default function HistoryPane({ onSelectHistory, onResume, onRename }: Pro
 
       {/* Tree */}
       <div style={{ overflowY: 'auto', flex: 1 }}>
-        {sortedDates.length === 0 && !loading && (
+        {loading && sessions.length === 0 && (
+          <div style={{ padding: '12px 10px', fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>
+            Loading…
+          </div>
+        )}
+        {!loading && fetchError && (
+          <div style={{ padding: '12px 10px', fontSize: 12, color: '#fbbf24' }}>
+            Fleet-console not reachable — retrying…
+            <div style={{ marginTop: 4, fontSize: 11, color: 'var(--muted)' }}>
+              Make sure fleet-console is running at port 4318.
+            </div>
+          </div>
+        )}
+        {!loading && !fetchError && sortedDates.length === 0 && (
           <div style={{ padding: '12px 10px', fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>
             No history found.
           </div>
@@ -259,8 +285,8 @@ export default function HistoryPane({ onSelectHistory, onResume, onRename }: Pro
                     {repo && (
                       <div style={{ fontSize: 10, color: 'var(--muted)', paddingLeft: 13, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         📁 {repo}
-                        {(s as any).messages > 0 && (
-                          <span style={{ marginLeft: 6, color: 'var(--cyan)' }}>{(s as any).messages} msgs</span>
+                        {typeof s.messages === 'number' && s.messages > 0 && (
+                          <span style={{ marginLeft: 6, color: 'var(--cyan)' }}>{s.messages} msgs</span>
                         )}
                       </div>
                     )}

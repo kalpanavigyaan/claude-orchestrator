@@ -90,7 +90,9 @@ export interface HistorySession {
   inputTokens?: number;
   outputTokens?: number;
   turns?: number;
-  messages?: ChatMessage[];
+  messages?: number | ChatMessage[];
+  createdAt?: string | null;
+  mtime?: number;
   messageQueue?: string[] | null;
   completedInstructions?: CompletedInstruction[] | null;
 }
