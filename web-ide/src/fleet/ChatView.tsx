@@ -28,6 +28,121 @@ function msgBg(role: ChatMessage['role']): React.CSSProperties {
   }
 }
 
+const CONTEXT_WINDOW = 200_000; // tokens — standard for Claude Sonnet/Opus 4.x
+
+function fmt(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+
+function TurnStats({ m }: { m: ChatMessage }) {
+  const u = m.turnUsage;
+  if (!u && !m.turnCost) return null;
+
+  const inp   = u?.input_tokens ?? 0;
+  const out   = u?.output_tokens ?? 0;
+  const cr    = u?.cache_read_input_tokens ?? 0;
+  const cc    = u?.cache_creation_input_tokens ?? 0;
+  const total = inp + cr;
+  const cacheHitPct = total > 0 ? Math.round((cr / total) * 100) : 0;
+  const ctxPct = total > 0 ? Math.round((total / CONTEXT_WINDOW) * 100) : 0;
+  const ctxColor = ctxPct > 75 ? '#f87171' : ctxPct > 40 ? '#fbbf24' : 'var(--muted)';
+
+  return (
+    <div style={{
+      display: 'flex', flexWrap: 'wrap', gap: '0 10px', alignItems: 'center',
+      padding: '3px 10px 4px', fontSize: 10.5, color: 'var(--muted)',
+      borderTop: '1px solid rgba(74,222,128,.1)', marginTop: 2,
+      fontFamily: 'monospace', letterSpacing: '0.02em',
+    }}>
+      {u && <>
+        <span title="Input tokens this turn">↑{fmt(inp)} in</span>
+        <span title="Output tokens this turn">↓{fmt(out)} out</span>
+        {cr > 0 && (
+          <span title="Cache-read tokens (already cached, cheaper)" style={{ color: '#4ade80' }}>
+            ↩{fmt(cr)} cached
+          </span>
+        )}
+        {cc > 0 && (
+          <span title="Cache-creation tokens (written to cache for future turns)" style={{ color: '#a3e635' }}>
+            ✎{fmt(cc)} cache-write
+          </span>
+        )}
+        {cacheHitPct > 0 && (
+          <span title="Percentage of input tokens served from cache" style={{ color: '#4ade80', fontWeight: 600 }}>
+            {cacheHitPct}% cached
+          </span>
+        )}
+        <span title={`Context window used (${total.toLocaleString()} / ${CONTEXT_WINDOW.toLocaleString()} tokens)`} style={{ color: ctxColor }}>
+          {ctxPct}% ctx
+        </span>
+      </>}
+      {m.turnCost != null && m.turnCost > 0 && (
+        <span title="Cost for this turn" style={{ marginLeft: 'auto', color: 'var(--muted)' }}>
+          ${m.turnCost.toFixed(4)}
+        </span>
+      )}
+      {m.turns != null && m.turns > 0 && (
+        <span title="API turns (tool-call loops) in this exchange">
+          {m.turns} turn{m.turns !== 1 ? 's' : ''}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ── Context status bar ────────────────────────────────────────────────────────
+// Shows at the top of the chat panel: how much of the 200k context window is used,
+// with colour-coded advice on when to /compact or start a new session.
+function ContextBar({ messages, session }: { messages: ChatMessage[]; session: Session | null }) {
+  const lastResult = [...messages].reverse().find(m => m.role === 'result' && m.turnUsage);
+  if (!lastResult?.turnUsage) return null;
+
+  const u = lastResult.turnUsage;
+  const ctxTokens = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
+  const pct = Math.round((ctxTokens / CONTEXT_WINDOW) * 100);
+  const turns = messages.filter(m => m.role === 'assistant').length;
+  const cost  = session?.lastResult?.cost ?? 0;
+
+  const barColor  = pct >= 80 ? '#f87171' : pct >= 55 ? '#fbbf24' : '#4ade80';
+  const advice    = pct >= 90 ? '⚠ Context nearly full — start a new session'
+                  : pct >= 80 ? 'Start a new session to avoid context cutoff'
+                  : pct >= 55 ? '/compact recommended to reduce context'
+                  : null;
+
+  return (
+    <div style={{
+      flexShrink: 0, borderBottom: '1px solid var(--border)',
+      background: 'rgba(255,255,255,.02)', padding: '4px 10px',
+    }}>
+      {/* Bar + stats row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: advice ? 3 : 0 }}>
+        {/* Progress bar */}
+        <div style={{ flex: 1, height: 4, background: 'rgba(255,255,255,.08)', borderRadius: 2, overflow: 'hidden' }}>
+          <div style={{ width: `${Math.min(pct, 100)}%`, height: '100%', background: barColor, borderRadius: 2, transition: 'width .3s' }} />
+        </div>
+        <span style={{ fontSize: 10, color: barColor, fontFamily: 'monospace', flexShrink: 0 }}>
+          {pct}%
+        </span>
+        <span style={{ fontSize: 10, color: 'var(--muted)', flexShrink: 0 }}>
+          {fmt(ctxTokens)} / {fmt(CONTEXT_WINDOW)} ctx
+        </span>
+        <span style={{ fontSize: 10, color: 'var(--muted)', flexShrink: 0 }}>
+          {turns} turn{turns !== 1 ? 's' : ''}
+        </span>
+        {cost > 0 && (
+          <span style={{ fontSize: 10, color: 'var(--muted)', flexShrink: 0 }}>
+            ${cost.toFixed(3)}
+          </span>
+        )}
+      </div>
+      {/* Advice */}
+      {advice && (
+        <div style={{ fontSize: 10, color: barColor, fontWeight: 500 }}>{advice}</div>
+      )}
+    </div>
+  );
+}
+
 export default function ChatView({ sessionId, session, isViewingHistory, historyMessages, historyLabel, historyLoading }: Props) {
   const [messages, setMessages]       = useState<ChatMessage[]>([]);
   const [workingState, setWorkingState] = useState<{ text: string; running: boolean } | null>(null);
@@ -207,6 +322,9 @@ export default function ChatView({ sessionId, session, isViewingHistory, history
         </div>
       )}
 
+      {/* Context window status bar — live sessions only */}
+      {!isViewingHistory && <ContextBar messages={messages} session={session} />}
+
       {/* Role filter tabs + search toggle */}
       <div className="fleet-filter-tabs" style={{ justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', gap: 3 }}>
@@ -321,11 +439,16 @@ export default function ChatView({ sessionId, session, isViewingHistory, history
                   )}
                 </div>
               ) : (
-                <div
-                  className="fc-msg-body"
-                  dangerouslySetInnerHTML={{ __html: highlight(mdToHtml(m.text ?? '')) }}
-                  style={{ padding: '6px 10px', fontSize: 13, lineHeight: 1.6, wordBreak: 'break-word' }}
-                />
+                <>
+                  {(m.text || m.role !== 'result') && (
+                    <div
+                      className="fc-msg-body"
+                      dangerouslySetInnerHTML={{ __html: highlight(mdToHtml(m.text ?? '')) }}
+                      style={{ padding: '6px 10px', fontSize: 13, lineHeight: 1.6, wordBreak: 'break-word' }}
+                    />
+                  )}
+                  {m.role === 'result' && <TurnStats m={m} />}
+                </>
               )}
             </div>
           );

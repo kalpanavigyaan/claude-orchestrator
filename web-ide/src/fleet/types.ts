@@ -20,9 +20,11 @@ export interface Session {
   resetAt?: number;
   nextContinueAt?: number;
   messageQueue?: string[];
+  queueMode?: 'same' | 'fresh';
+  completedCount?: number;
   lastResult?: {
     cost?: number;
-    usage?: { input_tokens: number; output_tokens: number };
+    usage?: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
   };
 }
 
@@ -55,12 +57,27 @@ export interface FleetState {
   now?: number;
 }
 
+export interface TurnUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'tool' | 'result' | 'system';
   text?: string;
   name?: string;
   input?: unknown;
   ts?: number;
+  turnUsage?: TurnUsage;
+  turnCost?: number;
+  turns?: number;
+}
+
+export interface CompletedInstruction {
+  text: string;
+  deliveredAt?: number;
 }
 
 export interface HistorySession {
@@ -75,6 +92,7 @@ export interface HistorySession {
   turns?: number;
   messages?: ChatMessage[];
   messageQueue?: string[] | null;
+  completedInstructions?: CompletedInstruction[] | null;
 }
 
 export interface UsageHistory {
@@ -114,5 +132,10 @@ export interface VM {
   distro?: string;
 }
 
-export type RightPanel = 'usage' | 'vms' | 'intelligence' | 'commands' | 'repos' | 'directories' | 'queue';
+export type RightPanel = 'usage' | 'vms' | 'intelligence' | 'commands' | 'repos' | 'directories' | 'queue' | 'skills' | 'instructions';
+
+export interface MdFile {
+  name: string;
+  content: string;
+}
 export type UsageTab = 'overview' | 'daily' | 'monthly' | 'models' | 'sessions-hist' | 'scatter';
