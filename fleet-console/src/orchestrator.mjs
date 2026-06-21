@@ -37,6 +37,18 @@ const MIN_INTERVAL_MS = config.continue.minIntervalSeconds * 1000;
 const USAGE_POLL_MS = Math.max(1000, config.usage.pollSeconds * 1000);
 const MESSAGE_CAP = 500;
 const SESSIONS_DIR = config.sessions.dir;
+// After this many assistant turns, auto-compact the conversation so the next resume loads a
+// summary (~2-5k tokens) instead of the full history (can be 50k-200k+ tokens after tool use).
+const AUTO_COMPACT_TURNS = 20;
+// Global instructions dir: .md files here are injected into every session's system prompt.
+// Falls back to <SESSIONS_DIR>/instructions when not explicitly configured.
+const GLOBAL_INSTRUCTIONS_DIR = (config.instructions && config.instructions.globalDir)
+  ? String(config.instructions.globalDir)
+  : path.join(SESSIONS_DIR, "instructions");
+// Skills dir: .md files the user can browse and selectively apply to any session.
+const SKILLS_DIR = (config.instructions && config.instructions.skillsDir)
+  ? String(config.instructions.skillsDir)
+  : path.join(SESSIONS_DIR, "skills");
 const REPO_LOCAL_ROOTS = (config.repos && Array.isArray(config.repos.localRoots)) ? config.repos.localRoots : [];
 const REPO_MAX_DEPTH = (config.repos && config.repos.maxDepth) || 3;
 const TOOL_SERVER_ENABLED = !!(config.toolServer && config.toolServer.enabled);
@@ -217,6 +229,8 @@ function sessionSummary(s) {
     autoContinue: s.autoContinue,
     autoRetryApiError: s.autoRetryApiError,
     messageQueue: s.messageQueue ?? [],
+    queueMode: s.queueMode || 'same',
+    completedCount: Array.isArray(s.completedInstructions) ? s.completedInstructions.length : 0,
     pendingApprovals: [...s.pendingApprovals.values()],
     lastResult: s.lastResult || null,
     createdAt: s.createdAt,
@@ -401,9 +415,14 @@ function sessionRecordObject(s) {
       if (m.text != null) entry.text = m.text;
       if (m.name != null) entry.tool = m.name;
       if (m.input != null) entry.input = m.input;
+      if (m.turnUsage != null) entry.turnUsage = m.turnUsage;
+      if (m.turnCost != null) entry.turnCost = m.turnCost;
+      if (m.turns != null) entry.turns = m.turns;
       return entry;
     }),
     messageQueue: Array.isArray(s.messageQueue) ? s.messageQueue.slice() : [],
+    completedInstructions: Array.isArray(s.completedInstructions) ? s.completedInstructions.slice() : [],
+    queueMode: s.queueMode || 'same',
   };
 }
 
@@ -501,6 +520,7 @@ function listHistory() {
             status: meta.status || null,
             messages: Array.isArray(meta.interactions) ? meta.interactions.length : 0,
             messageQueue: Array.isArray(meta.messageQueue) && meta.messageQueue.length > 0 ? meta.messageQueue : null,
+            completedInstructions: Array.isArray(meta.completedInstructions) && meta.completedInstructions.length > 0 ? meta.completedInstructions : null,
             mtime,
           });
         }
@@ -649,6 +669,26 @@ function readHistoryItem(rel) {
   return { meta, markdown };
 }
 
+/**
+ * List all .md files in a directory (sorted), returning name + full content for each.
+ * Creates the directory if it doesn't exist. Returns [] on any error.
+ */
+function listMdFiles(dir) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    return fs.readdirSync(dir)
+      .filter(n => n.toLowerCase().endsWith(".md"))
+      .sort()
+      .map(name => {
+        let content = "";
+        try { content = fs.readFileSync(path.join(dir, name), "utf8"); } catch { /* ignore */ }
+        return { name, content };
+      });
+  } catch {
+    return [];
+  }
+}
+
 /** List the .md instruction files in a session's instructions folder (sorted). */
 function listInstructionFiles(s) {
   try {
@@ -740,6 +780,43 @@ function writeToRunner(s, obj) {
 /** True if the session has a live runner we can write to. */
 function runnerAlive(s) {
   return !!(s.proc && s.proc.stdin && s.proc.stdin.writable);
+}
+
+/**
+ * Read all .md files from the global instructions directory (sorted by filename) and return their
+ * concatenated content. This is injected into every session's system prompt so Claude follows the
+ * rules automatically from the very first token — no "read instructions" message needed.
+ * Returns empty string if the directory doesn't exist or has no .md files.
+ */
+function loadGlobalInstructions() {
+  try {
+    fs.mkdirSync(GLOBAL_INSTRUCTIONS_DIR, { recursive: true });
+    const files = fs.readdirSync(GLOBAL_INSTRUCTIONS_DIR)
+      .filter(f => f.endsWith(".md"))
+      .sort();
+    if (!files.length) return "";
+    return files
+      .map(f => {
+        try { return fs.readFileSync(path.join(GLOBAL_INSTRUCTIONS_DIR, f), "utf8").trim(); } catch { return ""; }
+      })
+      .filter(Boolean)
+      .join("\n\n");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Send /compact to the runner so Claude Code summarizes the conversation transcript in-place.
+ * Future resumes will load only the summary instead of the full (potentially huge) history.
+ * Records the current assistant-turn count so the auto-compact guard knows when to compact again.
+ */
+function deliverCompact(s) {
+  if (!runnerAlive(s)) return false;
+  s.lastCompactedCount = s.messages.filter(m => m.role === "assistant").length;
+  writeToRunner(s, { type: "compact" });
+  recordMessage(s, { role: "system", text: "Compacting conversation history — future resumes will load a summary instead of the full transcript, saving tokens." });
+  return true;
 }
 
 /**
@@ -1204,9 +1281,18 @@ function createSession(spec) {
     policy === "auto"
       ? "You are running unattended. Work autonomously; do not wait for confirmation.\n"
       : "";
+  // Per-session instructions dir — Claude can read these on demand via the "Read instructions"
+  // button or if asked; the global rules (below) are already in the system prompt.
   const instructionsNote =
-    `Your session instruction files are markdown files in this directory: ${agentInstructionsDir}\n` +
+    `Your session-specific instruction files are in: ${agentInstructionsDir}\n` +
     `When asked to read your instructions, read every .md file in that directory (sorted by filename) and follow them.`;
+
+  // Global instructions: read fresh at session start and inject directly into the system prompt
+  // so Claude follows them automatically without needing a "read instructions" first turn.
+  const globalRules = loadGlobalInstructions();
+  const globalNote = globalRules
+    ? `\n\n## Global Session Rules\n\n${globalRules}`
+    : "";
 
   const runnerConfig = {
     cwd: spec.cwd,
@@ -1222,7 +1308,7 @@ function createSession(spec) {
       ? Object.entries(spec.directoryAccess).filter(([, a]) => a === "read").map(([p]) => p)
       : [],
     initialPrompt: spec.initialPrompt || "",
-    systemPromptAppend: autonomyNote + instructionsNote,
+    systemPromptAppend: autonomyNote + instructionsNote + globalNote,
     maxTurns: maxTurns,
     autoApprove,
     browser,
@@ -1266,6 +1352,8 @@ function createSession(spec) {
     autoContinue: spec.autoContinue !== false,
     autoRetryApiError: spec.autoRetryApiError !== false,
     messageQueue: Array.isArray(spec.messageQueue) ? spec.messageQueue.slice() : [],
+    completedInstructions: Array.isArray(spec.completedInstructions) ? spec.completedInstructions.slice() : [],
+    queueMode: spec.queueMode === 'fresh' ? 'fresh' : 'same',
     status: "starting",
     ready: false,
     resetAt: null,
@@ -1286,6 +1374,7 @@ function createSession(spec) {
     activity: null,
     dirty: true,
     proc: null,
+    lastCompactedCount: 0, // assistant-turn count when we last compacted; guards against re-compact loops
   };
 
   sessions.set(id, session);
@@ -1338,6 +1427,9 @@ function resumeSession(rel) {
     ...(e.text != null ? { text: e.text } : {}),
     ...(e.tool != null ? { name: e.tool } : {}),
     ...(e.input != null ? { input: e.input } : {}),
+    ...(e.turnUsage != null ? { turnUsage: e.turnUsage } : {}),
+    ...(e.turnCost != null ? { turnCost: e.turnCost } : {}),
+    ...(e.turns != null ? { turns: e.turns } : {}),
   }));
   const session = createSession({
     label: meta.label || "resumed",
@@ -1356,6 +1448,8 @@ function resumeSession(rel) {
     additionalDirectories: Array.isArray(meta.additionalDirectories) ? meta.additionalDirectories : undefined,
     directoryAccess: (meta.directoryAccess && typeof meta.directoryAccess === "object") ? meta.directoryAccess : undefined,
     messageQueue: Array.isArray(meta.messageQueue) ? meta.messageQueue : undefined,
+    completedInstructions: Array.isArray(meta.completedInstructions) ? meta.completedInstructions : undefined,
+    queueMode: meta.queueMode || undefined,
     sessionDirOverride: dir,
     preload,
     sdkSessionId: meta.sdkSessionId || null,
@@ -1368,6 +1462,15 @@ function resumeSession(rel) {
       ? "Resumed — continuing this conversation with full context."
       : "Resuming the most recent conversation in this folder (no saved session id).",
   });
+  // Warn when history is large — every resume re-sends the full transcript to the API until
+  // compacted. Prompt caching helps but only within ~1 hour; after that it's full input token cost.
+  const assistantTurns = (meta.interactions || []).filter(e => e.role === "assistant").length;
+  if (assistantTurns >= AUTO_COMPACT_TURNS) {
+    recordMessage(session, {
+      role: "system",
+      text: `Large history detected (${assistantTurns} turns). Each resume re-sends the full transcript (~50k–200k+ tokens). Auto-compact will run after the next turn, or use the Compact button to do it now.`,
+    });
+  }
   return session;
 }
 
@@ -1465,9 +1568,31 @@ function handleRunnerEvent(s, event) {
         // Deliver next queued instruction if one is waiting
         if (s.messageQueue && s.messageQueue.length > 0 && runnerAlive(s)) {
           const next = s.messageQueue.shift();
-          recordMessage(s, { role: "system", text: `queue: delivering next instruction (${s.messageQueue.length} remaining)` });
-          deliverUserText(s, next);
-          persistSession(s); // save updated queue to disk
+          if (!Array.isArray(s.completedInstructions)) s.completedInstructions = [];
+          s.completedInstructions.push({ text: next, deliveredAt: now() });
+          if (s.queueMode === 'fresh') {
+            // Start a new independent session for this instruction instead of continuing this one.
+            // Good for unrelated tasks where you don't want context to accumulate.
+            createSession({
+              label: s.label + ' › ' + next.slice(0, 40).replace(/\s+/g, ' '),
+              host: s.host, distro: s.distro || undefined, cwd: s.cwd,
+              model: s.model || undefined, mode: s.mode || undefined,
+              permissionMode: s.permissionMode || undefined,
+              policy: s.policy || undefined,
+              effort: s.effort || undefined, thinking: s.thinking || undefined,
+              browser: s.browser || undefined, toolServer: s.toolServer || undefined,
+              tools: Array.isArray(s.tools) ? s.tools : undefined,
+              additionalDirectories: Array.isArray(s.additionalDirectories) ? s.additionalDirectories : undefined,
+              directoryAccess: s.directoryAccess || undefined,
+              autoContinue: s.autoContinue, autoRetryApiError: s.autoRetryApiError,
+              initialPrompt: next,
+            });
+            recordMessage(s, { role: "system", text: `queue [new-session]: started fresh session for instruction (${s.messageQueue.length} remaining)` });
+          } else {
+            recordMessage(s, { role: "system", text: `queue: delivering next instruction (${s.messageQueue.length} remaining)` });
+            deliverUserText(s, next);
+          }
+          persistSession(s); // save updated queue + completedInstructions to disk
         }
       } else if (event.status === "error") {
         s.status = "error";
@@ -1548,14 +1673,28 @@ function handleRunnerEvent(s, event) {
       s.pendingApprovals.set(event.id, { id: event.id, tool: event.tool, input: event.input, ts: now() });
       pushSessionEvent(s, { kind: "approval", approval: { id: event.id, tool: event.tool, input: event.input } });
       break;
-    case "result":
+    case "result": {
+      // Per-turn token delta: subtract the previous cumulative totals so each result message shows
+      // only the tokens consumed by this specific exchange (not the entire session total).
+      const prevUsage = s.lastResult?.usage;
+      const prevCost = s.lastResult?.cost || 0;
+      const currUsage = event.usage;
+      const turnUsage = currUsage ? {
+        input_tokens: Math.max(0, (currUsage.input_tokens || 0) - (prevUsage?.input_tokens || 0)),
+        output_tokens: Math.max(0, (currUsage.output_tokens || 0) - (prevUsage?.output_tokens || 0)),
+        cache_read_input_tokens: Math.max(0, (currUsage.cache_read_input_tokens || 0) - (prevUsage?.cache_read_input_tokens || 0)),
+        cache_creation_input_tokens: Math.max(0, (currUsage.cache_creation_input_tokens || 0) - (prevUsage?.cache_creation_input_tokens || 0)),
+      } : null;
+      const turnCost = Math.max(0, (event.cost || 0) - prevCost);
       s.lastResult = { subtype: event.subtype, cost: event.cost, turns: event.turns, usage: event.usage };
       s.status = "idle";
       s.activity = null;
-      if (event.resultText) {
-        recordMessage(s, { role: "result", text: event.resultText });
-      }
+      // Always record a result message so the per-turn token stats are always visible.
+      recordMessage(s, { role: "result", text: event.resultText || "", turnUsage, turnCost, turns: event.turns });
+      // Auto-compact removed: was calling Claude to summarize itself (phantom token burn).
+      // The ContextBar in the UI now warns when context is large; user decides when to compact.
       break;
+    }
     case "rate_limit":
       s.resetAt = event.resetAt;
       s.status = "limited";
@@ -1731,6 +1870,16 @@ const server = http.createServer(async (req, res) => {
       usageHistoryCache = { at: now_, data: computeUsageHistory() };
     }
     sendJson(res, 200, usageHistoryCache.data);
+    return;
+  }
+  // Skills library — .md files the user can browse and apply to any session.
+  if (pathname === "/api/skills" && method === "GET") {
+    sendJson(res, 200, { files: listMdFiles(SKILLS_DIR), dir: SKILLS_DIR });
+    return;
+  }
+  // Global instructions library — the .md files injected into every session's system prompt.
+  if (pathname === "/api/instructions/global" && method === "GET") {
+    sendJson(res, 200, { files: listMdFiles(GLOBAL_INSTRUCTIONS_DIR), dir: GLOBAL_INSTRUCTIONS_DIR });
     return;
   }
   if (pathname === "/api/repos" && method === "GET") {
@@ -1986,6 +2135,11 @@ const server = http.createServer(async (req, res) => {
         });
       }
       sendJson(res, 200, { ok: r.alive });
+    } else if (verb === "compact") {
+      // Manually trigger conversation compaction to reduce future resume token cost.
+      if (!runnerAlive(s)) { sendJson(res, 409, { ok: false, reason: "runner not alive" }); return; }
+      const ok = deliverCompact(s);
+      sendJson(res, 200, { ok });
     } else if (verb === "interrupt") {
       // Stop the current task without ending the session (the SDK keeps the conversation alive).
       const ok = writeToRunner(s, { type: "interrupt" });
@@ -2183,6 +2337,11 @@ const server = http.createServer(async (req, res) => {
       }
       persistSession(s);
       sendJson(res, 200, { ok: true, queue: s.messageQueue ?? [] });
+    } else if (verb === "queue-mode") {
+      // Set how queued instructions are delivered: "same" (into this session) or "fresh" (new session per item).
+      s.queueMode = body.mode === 'fresh' ? 'fresh' : 'same';
+      persistSession(s);
+      sendJson(res, 200, { ok: true, queueMode: s.queueMode });
     } else if (verb === "rename") {
       const newLabel = String(body.label || "").trim();
       if (!newLabel) { sendJson(res, 400, { ok: false, reason: "label is required" }); return; }
