@@ -23,7 +23,7 @@ interface Props {
 }
 
 interface Distro { name: string; state: string; default?: boolean; }
-interface RepoItem { path: string; name: string; branch?: string | null; changes?: number | null; }
+interface RepoItem { path: string; name: string; branch?: string | null; changes?: number | null; _host?: string; _distro?: string; }
 interface RepoGroup { host: string; distro?: string | null; label?: string; repos: RepoItem[]; stopped?: boolean; }
 interface LocalRoot { root: string; repos: { name: string; path: string }[]; }
 interface DirEntry { name: string; path: string; isDir: boolean; }
@@ -147,18 +147,22 @@ function RepoPicker({
           <div key={`${g.host}-${g.distro}`}>
             {/* Group header */}
             <div style={{ padding: '4px 10px', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', background: 'var(--tab-strip)', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6, position: 'sticky', top: 0 }}>
-              <span style={{ color: g.host === 'wsl' ? 'var(--green)' : 'var(--cyan)' }}>{g.host}</span>
-              {g.distro && <span style={{ color: 'var(--muted)' }}>· {g.distro}</span>}
+              <span style={{ color: g.host === 'recent' ? 'var(--amber)' : g.host === 'wsl' ? 'var(--green)' : 'var(--cyan)' }}>
+                {g.host === 'recent' ? (g.label ?? 'Recent') : g.host}
+              </span>
+              {g.host !== 'recent' && g.distro && <span style={{ color: 'var(--muted)' }}>· {g.distro}</span>}
               {g.stopped && <span style={{ color: 'var(--amber)', fontSize: 8 }}>stopped</span>}
-              {/* Browse button for this host */}
-              <button type="button"
-                onClick={() => {
-                  const start = g.host === 'wsl' ? '/home' : (g.label ?? 'C:/');
-                  onOpenBrowser(start, g.host, g.distro ?? '');
-                }}
-                style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 10, padding: '1px 4px' }}>
-                Browse…
-              </button>
+              {/* Browse button — not shown for recent group */}
+              {g.host !== 'recent' && (
+                <button type="button"
+                  onClick={() => {
+                    const start = g.host === 'wsl' ? '/home' : (g.label ?? 'C:/');
+                    onOpenBrowser(start, g.host, g.distro ?? '');
+                  }}
+                  style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 10, padding: '1px 4px' }}>
+                  Browse…
+                </button>
+              )}
             </div>
             {/* Repos */}
             {g.stopped ? (
@@ -174,7 +178,7 @@ function RepoPicker({
                 const isSelected = selectedPaths.includes(r.path);
                 return (
                   <div key={r.path}
-                    onClick={() => !isSelected && onPick(r.path, g.host, g.distro ?? undefined)}
+                    onClick={() => !isSelected && onPick(r.path, r._host ?? g.host, r._distro ?? g.distro ?? undefined)}
                     style={{
                       padding: '5px 12px', cursor: isSelected ? 'default' : 'pointer',
                       display: 'flex', alignItems: 'center', gap: 8,
@@ -247,7 +251,8 @@ export default function NewSessionModal({ isOpen, onClose, onCreated, prefill }:
   useEffect(() => {
     if (!isOpen) return;
     // Reset defaults first so a re-open never carries over state from a prior session
-    setLabel('');
+    const today = new Date().toISOString().slice(0, 10);
+    setLabel(`${today}: `);
     setCwd('');
     setCwdHost('local');
     setCwdDistro('');
@@ -275,13 +280,37 @@ export default function NewSessionModal({ isOpen, onClose, onCreated, prefill }:
       if (prefill.autoContinue !== undefined)     setAutoContinue(prefill.autoContinue);
       if (prefill.additionalDirectories?.length)  setExtraRepos(prefill.additionalDirectories);
     }
+    setRepoGroups([]);
     setReposLoading(true);
     Promise.all([
+      // Recent folders from history — shown first as quick-picks
+      apiGet('/api/history').then(d => {
+        if (!d?.sessions) return;
+        const seen = new Set<string>();
+        const items: RepoItem[] = [];
+        for (const s of d.sessions as Array<{ repo?: string; host?: string; distro?: string }>) {
+          const p = s.repo;
+          if (!p || seen.has(p)) continue;
+          seen.add(p);
+          items.push({
+            path: p,
+            name: p.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? p,
+            _host:  s.host   ?? 'local',
+            _distro: s.distro ?? undefined,
+          });
+          if (items.length >= 8) break;
+        }
+        if (items.length > 0) {
+          setRepoGroups(prev => [
+            { host: 'recent', label: 'Recent', repos: items },
+            ...prev.filter(g => g.host !== 'recent'),
+          ]);
+        }
+      }),
       // Fast local repos from config roots (instant — no git)
       apiGet('/api/config/repos').then(d => {
         if (d?.localGroups) {
           setLocalRoots(d.localGroups as LocalRoot[]);
-          // Build a RepoGroup per local root (distro = root basename so header shows "local · kalpana-vigyaan")
           const localGroups: RepoGroup[] = (d.localGroups as LocalRoot[]).map((lg: LocalRoot) => ({
             host: 'local',
             distro: lg.root.split('/').pop() ?? lg.root,
@@ -335,6 +364,11 @@ export default function NewSessionModal({ isOpen, onClose, onCreated, prefill }:
     setCwdHost(host);
     setCwdDistro(distro ?? '');
     closeBrowser();
+    // Auto-complete label if it still looks like the empty date prefix (YYYY-MM-DD: )
+    const repoName = path.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? '';
+    if (repoName) {
+      setLabel(prev => /^\d{4}-\d{2}-\d{2}: ?$/.test(prev) ? prev.replace(/: ?$/, ': ') + repoName : prev);
+    }
   }
 
   function addRepo(path: string) {
