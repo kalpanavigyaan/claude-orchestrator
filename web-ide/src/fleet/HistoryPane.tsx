@@ -7,6 +7,7 @@ interface Props {
   onSelectHistory: (rel: string, sessions: HistorySession[]) => void;
   onResume: (id: string) => void;
   onRename?: (rel: string, newLabel: string) => void;
+  onCopySession?: (s: HistorySession) => void;
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -44,7 +45,7 @@ function repoName(s: HistorySession): string {
 
 interface CtxMenu { x: number; y: number; session: HistorySession; }
 
-export default function HistoryPane({ onSelectHistory, onResume, onRename }: Props) {
+export default function HistoryPane({ onSelectHistory, onResume, onRename, onCopySession }: Props) {
   const [sessions, setSessions]     = useState<HistorySession[]>([]);
   const [filter, setFilter]         = useState('');
   // Expand all groups by default so sessions are visible regardless of age
@@ -327,6 +328,18 @@ export default function HistoryPane({ onSelectHistory, onResume, onRename }: Pro
             </svg>
             Resume Session
           </div>
+          {onCopySession && (
+            <>
+              <div className="fleet-ctx-sep" />
+              <div className="fleet-ctx-item" onClick={() => { onCopySession(ctxMenu.session); setCtxMenu(null); }}>
+                <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <rect x="5" y="5" width="9" height="9" rx="1"/>
+                  <path d="M11 5V3a1 1 0 00-1-1H3a1 1 0 00-1 1v7a1 1 0 001 1h2"/>
+                </svg>
+                Copy Session
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

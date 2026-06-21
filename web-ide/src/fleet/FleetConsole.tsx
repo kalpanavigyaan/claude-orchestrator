@@ -29,6 +29,7 @@ import VMsPanel         from './VMsPanel';
 import RightActivityBar     from './RightActivityBar';
 import SkillsPanel          from './SkillsPanel';
 import InstructionsLibPanel from './InstructionsLibPanel';
+import type { SessionPrefill } from './NewSessionModal';
 import NewSessionModal   from './NewSessionModal';
 import { ApprovalModal }     from './ApprovalModal';
 import InstructionsModal from './InstructionsModal';
@@ -86,7 +87,7 @@ export function FleetConsole({ onSwitchToEditor }: { onSwitchToEditor?: () => vo
 
   // ── Modal states ──────────────────────────────────────────────────────────
   const [showNewSession, setShowNewSession]   = useState(false);
-  const [sessionPrefill, setSessionPrefill]   = useState<{ cwd: string; host: string; distro?: string } | undefined>();
+  const [sessionPrefill, setSessionPrefill]   = useState<SessionPrefill | undefined>();
   const [showReset, setShowReset]             = useState(false);
   const [showSettings, setShowSettings]       = useState(false);
   const [showInstructions, setShowInstructions] = useState(false);
@@ -280,6 +281,33 @@ export function FleetConsole({ onSwitchToEditor }: { onSwitchToEditor?: () => vo
     if (viewingHistRel === rel) setHistLabel(newLabel);
   }, [viewingHistRel]);
 
+  // ── Copy history session → open NewSessionModal pre-filled ───────────────
+  const handleCopyHistory = useCallback(async (s: import('./types').HistorySession) => {
+    const data = await apiGet(`/api/history/item?path=${encodeURIComponent(s.rel)}`);
+    const meta = data?.meta ?? {};
+    // Default label: YYYY-MM-DD: <repo-name>
+    const today = new Date().toISOString().slice(0, 10);
+    const repoName = (meta.cwd as string | undefined)
+      ?.replace(/\\/g, '/')
+      .split('/')
+      .filter(Boolean)
+      .pop() ?? s.repo ?? s.label ?? 'session';
+    setSessionPrefill({
+      label:                `${today}: ${repoName}`,
+      cwd:                  meta.cwd        ?? undefined,
+      host:                 meta.host       ?? 'local',
+      distro:               meta.distro     ?? undefined,
+      model:                meta.model      ?? undefined,
+      mode:                 meta.mode       ?? undefined,
+      effort:               meta.effort     ?? undefined,
+      thinking:             meta.thinking   ?? undefined,
+      browser:              meta.browser    ?? undefined,
+      autoContinue:         meta.autoContinue ?? true,
+      additionalDirectories: Array.isArray(meta.additionalDirectories) ? meta.additionalDirectories : undefined,
+    });
+    setShowNewSession(true);
+  }, []);
+
   // ── Resize logic ──────────────────────────────────────────────────────────
   const startResize = (type: string, x: number, y: number, val: number) => {
     resizing.current = { type, startX: x, startY: y, startVal: val };
@@ -435,6 +463,7 @@ export function FleetConsole({ onSwitchToEditor }: { onSwitchToEditor?: () => vo
               onSelectHistory={handleSelectHistory}
               onResume={handleResumeHistory}
               onRename={handleRenameHistory}
+              onCopySession={handleCopyHistory}
             />
           </div>
 

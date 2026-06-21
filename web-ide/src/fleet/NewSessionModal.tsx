@@ -1,11 +1,25 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { apiGet, apiPost } from '../fleet/api';
 
+export interface SessionPrefill {
+  cwd?: string;
+  host?: string;
+  distro?: string;
+  label?: string;
+  model?: string;
+  mode?: string;
+  effort?: string;
+  thinking?: string;
+  browser?: boolean;
+  autoContinue?: boolean;
+  additionalDirectories?: string[];
+}
+
 interface Props {
   isOpen: boolean;
   onClose: () => void;
   onCreated: (id: string) => void;
-  prefill?: { cwd: string; host: string; distro?: string };
+  prefill?: SessionPrefill;
 }
 
 interface Distro { name: string; state: string; default?: boolean; }
@@ -229,13 +243,37 @@ export default function NewSessionModal({ isOpen, onClose, onCreated, prefill }:
     parent: null as string | null, loading: false, error: '', host: 'local', distro: '',
   });
 
-  // Apply prefill when modal opens (e.g. right-click → Start session here from repos panel)
+  // Reset form to defaults then apply prefill on every open
   useEffect(() => {
     if (!isOpen) return;
+    // Reset defaults first so a re-open never carries over state from a prior session
+    setLabel('');
+    setCwd('');
+    setCwdHost('local');
+    setCwdDistro('');
+    setExtraRepos([]);
+    setModel('');
+    setMode('bypassPermissions');
+    setEffort('');
+    setThinking('adaptive');
+    setBrowser(false);
+    setAutoContinue(true);
+    setPrompt('');
+    setError('');
+    setCwdFilter('');
+    setReposFilter('');
     if (prefill) {
-      setCwd(prefill.cwd);
-      setCwdHost(prefill.host);
-      setCwdDistro(prefill.distro ?? '');
+      if (prefill.label)                          setLabel(prefill.label);
+      if (prefill.cwd)                            setCwd(prefill.cwd);
+      if (prefill.host)                           setCwdHost(prefill.host);
+      if (prefill.distro !== undefined)           setCwdDistro(prefill.distro ?? '');
+      if (prefill.model !== undefined)            setModel(prefill.model ?? '');
+      if (prefill.mode)                           setMode(prefill.mode);
+      if (prefill.effort !== undefined)           setEffort(prefill.effort ?? '');
+      if (prefill.thinking)                       setThinking(prefill.thinking);
+      if (prefill.browser !== undefined)          setBrowser(prefill.browser);
+      if (prefill.autoContinue !== undefined)     setAutoContinue(prefill.autoContinue);
+      if (prefill.additionalDirectories?.length)  setExtraRepos(prefill.additionalDirectories);
     }
     setReposLoading(true);
     Promise.all([
