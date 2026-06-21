@@ -3,6 +3,167 @@ import { apiPost, openSSE, escHtml, mdToHtml } from '../fleet/api';
 import { toolStats } from './toolStats';
 import type { ChatMessage, Session } from '../fleet/types';
 
+// ── Diff computation ──────────────────────────────────────────────────────────
+type DiffLine = { type: 'same' | 'del' | 'add'; text: string };
+type CollapsedEntry = DiffLine | { type: 'ellipsis'; count: number };
+
+function computeDiff(oldText: string, newText: string): DiffLine[] {
+  const a = oldText.split('\n');
+  const b = newText.split('\n');
+  if (a.length + b.length > 600) {
+    return [
+      ...a.map(line => ({ type: 'del' as const, text: line })),
+      ...b.map(line => ({ type: 'add' as const, text: line })),
+    ];
+  }
+  const m = a.length, n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] + 1 : Math.max(dp[i-1][j], dp[i][j-1]);
+  const result: DiffLine[] = [];
+  let i = m, j = n;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && a[i-1] === b[j-1]) {
+      result.unshift({ type: 'same', text: a[i-1] }); i--; j--;
+    } else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) {
+      result.unshift({ type: 'add', text: b[j-1] }); j--;
+    } else {
+      result.unshift({ type: 'del', text: a[i-1] }); i--;
+    }
+  }
+  return result;
+}
+
+const CTX = 3;
+function collapseContext(lines: DiffLine[]): CollapsedEntry[] {
+  const changed = new Set<number>();
+  lines.forEach((l, i) => { if (l.type !== 'same') changed.add(i); });
+  const visible = new Set<number>();
+  changed.forEach(i => {
+    for (let k = Math.max(0, i - CTX); k <= Math.min(lines.length - 1, i + CTX); k++)
+      visible.add(k);
+  });
+  const out: CollapsedEntry[] = [];
+  let hidden = 0;
+  lines.forEach((l, i) => {
+    if (visible.has(i)) {
+      if (hidden > 0) { out.push({ type: 'ellipsis', count: hidden }); hidden = 0; }
+      out.push(l);
+    } else { hidden++; }
+  });
+  if (hidden > 0) out.push({ type: 'ellipsis', count: hidden });
+  return out;
+}
+
+function FileDiffViewer({ name, input }: { name: string; input: unknown }) {
+  const [expanded, setExpanded] = useState(false);
+  const inp = (typeof input === 'object' && input !== null) ? input as Record<string, string> : null;
+  if (!inp) {
+    return (
+      <div style={{ padding: '5px 10px', fontSize: 12, fontFamily: 'monospace', color: '#e5c07b' }}>
+        🔧 <strong>{name}</strong>
+        <span style={{ color: 'var(--muted)', fontSize: 11, marginLeft: 4 }}>
+          {typeof input === 'string' ? input : JSON.stringify(input ?? '').slice(0, 200)}
+        </span>
+      </div>
+    );
+  }
+  const cmd = inp.command ?? 'str_replace';
+  const path = inp.path ?? '';
+
+  if (cmd === 'view') {
+    return (
+      <div style={{ padding: '3px 10px', fontSize: 11, color: 'var(--muted)', fontFamily: 'monospace' }}>
+        👁 <span style={{ color: '#e5c07b' }}>{path}</span>
+        {inp.view_range ? <span style={{ marginLeft: 6 }}>lines {inp.view_range}</span> : null}
+      </div>
+    );
+  }
+
+  if (cmd === 'create') {
+    const text = inp.file_text ?? '';
+    const lines = text.split('\n');
+    return (
+      <div style={{ fontFamily: 'monospace' }}>
+        <button onClick={() => setExpanded(e => !e)} style={{
+          background: 'none', border: 'none', cursor: 'pointer', color: '#4ade80',
+          fontSize: 11, padding: '3px 10px', display: 'flex', alignItems: 'center',
+          gap: 5, width: '100%', textAlign: 'left',
+        }}>
+          <span>{expanded ? '▼' : '▶'}</span>
+          <span>✨ create <strong>{path}</strong></span>
+          <span style={{ color: 'var(--muted)' }}>({lines.length} lines)</span>
+        </button>
+        {expanded && (
+          <div style={{ overflowX: 'auto', maxHeight: 360, overflowY: 'auto', background: 'rgba(0,0,0,.3)', margin: '0 10px 6px', borderRadius: 3, fontSize: 11 }}>
+            {lines.map((line, li) => (
+              <div key={li} style={{ display: 'flex', padding: '0 6px', background: 'rgba(74,222,128,.05)' }}>
+                <span style={{ color: 'var(--muted)', minWidth: 32, userSelect: 'none', textAlign: 'right', paddingRight: 8, flexShrink: 0 }}>{li + 1}</span>
+                <span style={{ color: '#4ade80', flexShrink: 0 }}>+</span>
+                <span style={{ color: '#d4d4d4', paddingLeft: 6, whiteSpace: 'pre' }}>{line}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // str_replace
+  const oldStr = inp.old_string ?? '';
+  const newStr = inp.new_string ?? '';
+  if (!oldStr && !newStr) {
+    return (
+      <div style={{ padding: '5px 10px', fontSize: 11, color: 'var(--muted)', fontFamily: 'monospace' }}>
+        🔧 <strong>{name}</strong> {path}
+      </div>
+    );
+  }
+  const diffLines = computeDiff(oldStr, newStr);
+  const collapsed = collapseContext(diffLines);
+  const adds = diffLines.filter(l => l.type === 'add').length;
+  const dels = diffLines.filter(l => l.type === 'del').length;
+
+  return (
+    <div style={{ fontFamily: 'monospace' }}>
+      <button onClick={() => setExpanded(e => !e)} style={{
+        background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)',
+        fontSize: 11, padding: '3px 10px', display: 'flex', alignItems: 'center',
+        gap: 5, width: '100%', textAlign: 'left',
+      }}>
+        <span>{expanded ? '▼' : '▶'}</span>
+        <span>✏ <strong style={{ color: '#e5c07b' }}>{path}</strong></span>
+        <span style={{ color: '#f87171' }}>−{dels}</span>
+        <span style={{ color: '#4ade80' }}>+{adds}</span>
+      </button>
+      {expanded && (
+        <div style={{ overflowX: 'auto', maxHeight: 400, overflowY: 'auto', background: 'rgba(0,0,0,.3)', margin: '0 10px 6px', borderRadius: 3, fontSize: 11 }}>
+          {collapsed.map((entry, ei) => {
+            if (entry.type === 'ellipsis') {
+              return (
+                <div key={ei} style={{ padding: '1px 6px', color: 'var(--muted)', fontStyle: 'italic', background: 'rgba(255,255,255,.02)' }}>
+                  ··· {entry.count} unchanged lines
+                </div>
+              );
+            }
+            const dl = entry as DiffLine;
+            const bg = dl.type === 'del' ? 'rgba(248,113,113,.08)' : dl.type === 'add' ? 'rgba(74,222,128,.08)' : 'transparent';
+            const col = dl.type === 'del' ? '#f87171' : dl.type === 'add' ? '#4ade80' : '#d4d4d4';
+            const prefix = dl.type === 'del' ? '−' : dl.type === 'add' ? '+' : ' ';
+            return (
+              <div key={ei} style={{ display: 'flex', padding: '0 6px', background: bg }}>
+                <span style={{ color: col, minWidth: 14, userSelect: 'none', flexShrink: 0 }}>{prefix}</span>
+                <span style={{ color: col, paddingLeft: 6, whiteSpace: 'pre' }}>{dl.text}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface Props {
   sessionId: string | null;
   session: Session | null;
@@ -101,7 +262,7 @@ function ContextBar({ messages, session }: { messages: ChatMessage[]; session: S
   const ctxTokens = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
   const pct = Math.round((ctxTokens / CONTEXT_WINDOW) * 100);
   const turns = messages.filter(m => m.role === 'assistant').length;
-  const cost  = session?.lastResult?.cost ?? 0;
+  const cost  = messages.reduce((sum, m) => sum + (m.turnCost ?? 0), 0);
 
   const barColor  = pct >= 80 ? '#f87171' : pct >= 55 ? '#fbbf24' : '#4ade80';
   const advice    = pct >= 90 ? '⚠ Context nearly full — start a new session'
@@ -130,8 +291,8 @@ function ContextBar({ messages, session }: { messages: ChatMessage[]; session: S
           {turns} turn{turns !== 1 ? 's' : ''}
         </span>
         {cost > 0 && (
-          <span style={{ fontSize: 10, color: 'var(--muted)', flexShrink: 0 }}>
-            ${cost.toFixed(3)}
+          <span title={`Cumulative session cost: $${cost.toFixed(5)}`} style={{ fontSize: 10, color: '#fbbf24', flexShrink: 0, fontWeight: 600 }}>
+            💰 ${cost.toFixed(3)}
           </span>
         )}
       </div>
@@ -430,13 +591,8 @@ export default function ChatView({ sessionId, session, isViewingHistory, history
 
               {/* Message body */}
               {m.role === 'tool' ? (
-                <div style={{ padding: '5px 10px', fontSize: 12, fontFamily: 'monospace', color: '#e5c07b' }}>
-                  🔧 <strong>{m.name}</strong>
-                  {m.input != null && (
-                    <span style={{ color: 'var(--muted)', fontSize: 11, marginLeft: 4 }}>
-                      {typeof m.input === 'string' ? m.input : JSON.stringify(m.input).slice(0, 200)}
-                    </span>
-                  )}
+                <div style={{ fontSize: 12, color: '#e5c07b' }}>
+                  <FileDiffViewer name={m.name ?? 'tool'} input={m.input} />
                 </div>
               ) : (
                 <>

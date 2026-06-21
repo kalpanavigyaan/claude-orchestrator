@@ -90,6 +90,15 @@ export default function SessionTabBar({
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
               {s.label}{statusSuffix(s)}
             </span>
+            {/* Cost badge */}
+            {s.lastResult?.cost != null && s.lastResult.cost > 0 && (
+              <span
+                title={`Last turn cost: $${s.lastResult.cost.toFixed(4)}`}
+                style={{ fontSize: 9, color: '#fbbf2499', fontFamily: 'monospace', flexShrink: 0 }}
+              >
+                ${s.lastResult.cost.toFixed(2)}
+              </span>
+            )}
             {/* Close */}
             <button
               onClick={e => { e.stopPropagation(); onClose(id); }}
