@@ -83,7 +83,7 @@ export default function ControlsPane({ session, models, onHistoryResume, viewing
     await apiPost(`/api/sessions/${id}/auto-compact`, { enabled: e.target.checked, threshold: s.autoCompactThreshold ?? 0.65 });
   }
   async function setAutoCompactThreshold(e: React.ChangeEvent<HTMLSelectElement>) {
-    await apiPost(`/api/sessions/${id}/auto-compact`, { enabled: s.autoCompact ?? false, threshold: parseFloat(e.target.value) });
+    await apiPost(`/api/sessions/${id}/auto-compact`, { enabled: s.autoCompact !== false, threshold: parseFloat(e.target.value) });
   }
   async function compactNow() {
     setCompacting(true);
@@ -197,15 +197,15 @@ export default function ControlsPane({ session, models, onHistoryResume, viewing
               </label>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', flex: 1 }}>
-                  <input type="checkbox" checked={!!session.autoCompact} onChange={toggleAutoCompact} style={{ accentColor: '#fbbf24' }} />
+                  <input type="checkbox" checked={session.autoCompact !== false} onChange={toggleAutoCompact} style={{ accentColor: '#fbbf24' }} />
                   Auto-compact at
                 </label>
                 <select
                   value={String(session.autoCompactThreshold ?? 0.65)}
                   onChange={setAutoCompactThreshold}
-                  disabled={!session.autoCompact}
+                  disabled={session.autoCompact === false}
                   className="fleet-control-input"
-                  style={{ width: 60, fontSize: 11, opacity: session.autoCompact ? 1 : 0.4 }}
+                  style={{ width: 60, fontSize: 11, opacity: session.autoCompact === false ? 0.4 : 1 }}
                 >
                   <option value="0.40">40%</option>
                   <option value="0.50">50%</option>

@@ -1382,7 +1382,7 @@ function createSession(spec) {
       : Object.fromEntries((Array.isArray(spec.additionalDirectories) ? spec.additionalDirectories : []).map((d) => [String(d), "read"])),
     autoContinue: spec.autoContinue !== false,
     autoRetryApiError: spec.autoRetryApiError !== false,
-    autoCompact: spec.autoCompact === true,
+    autoCompact: spec.autoCompact !== false,
     autoCompactThreshold: typeof spec.autoCompactThreshold === 'number'
       ? Math.min(Math.max(spec.autoCompactThreshold, 0.30), 0.95)
       : 0.65,
