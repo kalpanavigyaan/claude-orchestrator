@@ -149,9 +149,9 @@ export default function SessionsPane({ sessions, selectedId, onSelect, onDismiss
   const visible  = sessions.filter(s => s.status !== 'ended');
   const pinned   = visible.filter(s => pins.has(s.id));
   const unpinned = visible.filter(s => !pins.has(s.id));
-  // Active (running etc.) always visible; idle/error hidden unless pinned
-  const active   = unpinned.filter(s => ACTIVE_STATUSES.has(s.status));
-  const hidden   = unpinned.filter(s => !ACTIVE_STATUSES.has(s.status));
+  // Active OR currently selected session always visible; other idle/error hidden unless pinned
+  const active   = unpinned.filter(s => ACTIVE_STATUSES.has(s.status) || s.id === selectedId);
+  const hidden   = unpinned.filter(s => !ACTIVE_STATUSES.has(s.status) && s.id !== selectedId);
 
   // F2 to rename selected session
   useEffect(() => {
@@ -341,23 +341,6 @@ export default function SessionsPane({ sessions, selectedId, onSelect, onDismiss
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1, minHeight: 0 }}>
-      {/* Header */}
-      <div style={{
-        padding: '4px 8px', fontSize: 11, fontWeight: 600, letterSpacing: '0.05em',
-        textTransform: 'uppercase', color: '#4ade80',
-        borderLeft: '3px solid #4ade80',
-        borderBottom: '1px solid var(--border)', flexShrink: 0,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      }}>
-        <span>Sessions</span>
-        {resetAt != null && resetAt > 0 && (
-          <span style={{ fontSize: 10, fontFamily: 'monospace', fontWeight: 400, color: 'var(--cyan)' }}
-            title="Account reset countdown">
-            <Countdown targetMs={resetAt} />
-          </span>
-        )}
-      </div>
-
       <div style={{ overflowY: 'auto', flex: 1 }}>
         {visible.length === 0 ? (
           <div style={{ padding: '12px 10px', fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>

@@ -432,7 +432,7 @@ export function FleetConsole({ onSwitchToEditor }: { onSwitchToEditor?: () => vo
         }}>
           {/* Sessions pane */}
           <div style={{ height: sessH, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <div className="sb-header" style={{ padding: '6px 8px 4px 12px', borderLeft: '3px solid #4ade80', color: '#4ade80' }}>
+            <div className="sb-header" style={{ padding: '6px 8px 4px 12px', borderLeft: '3px solid #4ade80', color: '#4ade80', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 Sessions
                 {(() => {
@@ -444,6 +444,12 @@ export function FleetConsole({ onSwitchToEditor }: { onSwitchToEditor?: () => vo
                     : <span className="badge">{total}</span>;
                 })()}
               </span>
+              {fleetState?.account?.resetAt != null && fleetState.account.resetAt > 0 && (
+                <span style={{ fontSize: 10, fontFamily: 'monospace', fontWeight: 400, color: 'var(--cyan)', opacity: 0.7 }}
+                  title="Account reset countdown">
+                  {fmtCountdown(fleetState.account.resetAt)}
+                </span>
+              )}
             </div>
             <div style={{ flex: 1, overflow: 'auto' }}>
               <SessionsPane
