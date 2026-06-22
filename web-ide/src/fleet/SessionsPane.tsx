@@ -134,6 +134,51 @@ export default function SessionsPane({ sessions, selectedId, onSelect, onDismiss
     setCtxMenu({ x: e.clientX, y: e.clientY, session: s });
   }
 
+  // Small SVG icon buttons for play / pause / stop / dismiss
+  const IC = {
+    play: (
+      <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+        <path d="M4 2.5l9 5.5-9 5.5V2.5z"/>
+      </svg>
+    ),
+    pause: (
+      <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+        <rect x="3" y="2" width="4" height="12" rx="1"/>
+        <rect x="9" y="2" width="4" height="12" rx="1"/>
+      </svg>
+    ),
+    stop: (
+      <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+        <rect x="2" y="2" width="12" height="12" rx="1.5"/>
+      </svg>
+    ),
+    dismiss: (
+      <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+        <line x1="3" y1="3" x2="13" y2="13"/><line x1="13" y1="3" x2="3" y2="13"/>
+      </svg>
+    ),
+  };
+
+  function CtrlBtn({ icon, title, color, onClick }: {
+    icon: React.ReactNode; title: string; color: string; onClick: (e: React.MouseEvent) => void;
+  }) {
+    return (
+      <button
+        onClick={onClick}
+        title={title}
+        style={{
+          background: 'none', border: 'none', cursor: 'pointer',
+          color, padding: '2px', display: 'flex', alignItems: 'center',
+          borderRadius: 3, flexShrink: 0, opacity: 0.55, transition: 'opacity .1s, background .1s',
+        }}
+        onMouseEnter={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.background = 'rgba(255,255,255,.08)'; }}
+        onMouseLeave={e => { e.currentTarget.style.opacity = '0.55'; e.currentTarget.style.background = 'none'; }}
+      >
+        {icon}
+      </button>
+    );
+  }
+
   function renderRow(s: Session) {
     const isSelected = s.id === selectedId;
     const isDormant  = !ACTIVE_STATUSES.has(s.status);
@@ -142,34 +187,31 @@ export default function SessionsPane({ sessions, selectedId, onSelect, onDismiss
     const repo       = s.cwd ? (s.cwd.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? s.cwd) : '';
     const startMs    = (s as unknown as Record<string, unknown>).startedAt as number | undefined;
 
+    const canPlay    = s.status === 'idle' || s.status === 'error' || s.status === 'limited';
+    const canPause   = s.status === 'running';
+    const canStop    = s.status === 'running' || s.status === 'starting' || s.status === 'idle';
+    const canDismiss = !ACTIVE_STATUSES.has(s.status);
+
     return (
       <div
         key={s.id}
         tabIndex={0}
         onClick={() => onSelect(s.id)}
         onContextMenu={e => handleContextMenu(e, s)}
-        className="session-row"
         style={{
           padding: '5px 8px',
           cursor: 'pointer',
-          position: 'relative',
           backgroundColor: isSelected ? 'var(--sb-focus)' : 'transparent',
           color: isSelected ? '#fff' : isDormant ? 'var(--muted)' : 'var(--sb-fg)',
           borderLeft: isSelected ? '3px solid var(--accent)' : '3px solid transparent',
           borderBottom: '1px solid rgba(255,255,255,.04)',
           userSelect: 'none', outline: 'none',
         }}
-        onMouseEnter={e => {
-          if (!isSelected) (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--sb-hover)';
-          (e.currentTarget as HTMLElement).querySelector<HTMLElement>('.dismiss-btn')!.style.opacity = '1';
-        }}
-        onMouseLeave={e => {
-          if (!isSelected) (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
-          (e.currentTarget as HTMLElement).querySelector<HTMLElement>('.dismiss-btn')!.style.opacity = '0';
-        }}
+        onMouseEnter={e => { if (!isSelected) (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--sb-hover)'; }}
+        onMouseLeave={e => { if (!isSelected) (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
       >
-        {/* Row 1 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {/* Row 1: dot · label · [elapsed] · controls */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
           <span style={{
             width: 7, height: 7, borderRadius: '50%',
             backgroundColor: dotColor, flexShrink: 0,
@@ -205,25 +247,33 @@ export default function SessionsPane({ sessions, selectedId, onSelect, onDismiss
             </span>
           )}
           {s.status === 'limited' && s.resetAt != null && (
-            <span style={{ fontSize: 10, fontFamily: 'monospace', color: '#fbbf24', flexShrink: 0 }} title="Waiting for account reset">
-              ⏸ <Countdown targetMs={s.resetAt} />
+            <span style={{ fontSize: 10, fontFamily: 'monospace', color: '#fbbf24', flexShrink: 0 }} title="Waiting for reset">
+              <Countdown targetMs={s.resetAt} />
             </span>
           )}
 
-          {/* Dismiss button — visible on hover for dormant sessions */}
-          <button
-            className="dismiss-btn"
-            onClick={e => dismiss(s, e)}
-            title="Remove from list (session saved to History)"
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              color: 'var(--muted)', padding: '0 2px', fontSize: 12,
-              lineHeight: 1, flexShrink: 0, opacity: 0, transition: 'opacity .1s',
-            }}
-          >✕</button>
+          {/* ── Session controls ── */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+            {canPlay && (
+              <CtrlBtn icon={IC.play} title="Continue session" color="#4ade80"
+                onClick={e => { e.stopPropagation(); apiPost(`/api/sessions/${s.id}/continue`, {}); }} />
+            )}
+            {canPause && (
+              <CtrlBtn icon={IC.pause} title="Interrupt (pause current task)" color="#fbbf24"
+                onClick={e => { e.stopPropagation(); apiPost(`/api/sessions/${s.id}/interrupt`, {}); }} />
+            )}
+            {canStop && (
+              <CtrlBtn icon={IC.stop} title="Stop runner" color="#f87171"
+                onClick={e => { e.stopPropagation(); apiPost(`/api/sessions/${s.id}/stop`, {}); }} />
+            )}
+            {canDismiss && (
+              <CtrlBtn icon={IC.dismiss} title="Remove from list" color="var(--muted)"
+                onClick={e => dismiss(s, e)} />
+            )}
+          </div>
         </div>
 
-        {/* Row 2 */}
+        {/* Row 2: host · repo · status badge */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 1, paddingLeft: 13, fontSize: 10 }}>
           <span style={{ color: hostColor, fontWeight: 600 }}>{s.host}</span>
           {s.distro && <span style={{ color: '#9cdcfe', opacity: 0.8 }}>· {s.distro}</span>}
