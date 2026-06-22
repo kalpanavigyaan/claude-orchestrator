@@ -430,14 +430,19 @@ export function FleetConsole({ onSwitchToEditor }: { onSwitchToEditor?: () => vo
           borderRight: '1px solid var(--sb-border)', display: 'flex',
           flexDirection: 'column', overflow: 'hidden', position: 'relative',
         }}>
-          {/* Active Sessions pane */}
+          {/* Sessions pane */}
           <div style={{ height: sessH, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div className="sb-header" style={{ padding: '6px 8px 4px 12px', borderLeft: '3px solid #4ade80', color: '#4ade80' }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                Active Sessions
-                {(fleetState?.sessions?.length ?? 0) > 0 && (
-                  <span className="badge">{fleetState!.sessions.length}</span>
-                )}
+                Sessions
+                {(() => {
+                  const running = (fleetState?.sessions ?? []).filter(s => s.status === 'running' || s.status === 'starting' || s.status === 'limited').length;
+                  const total   = (fleetState?.sessions ?? []).filter(s => s.status !== 'ended').length;
+                  if (total === 0) return null;
+                  return running > 0
+                    ? <><span className="badge" style={{ background: '#4ade8033', color: '#4ade80' }}>{running} running</span><span className="badge">{total}</span></>
+                    : <span className="badge">{total}</span>;
+                })()}
               </span>
             </div>
             <div style={{ flex: 1, overflow: 'auto' }}>
