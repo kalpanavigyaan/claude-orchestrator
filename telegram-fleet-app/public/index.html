@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Fleet Console</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg:   var(--tg-theme-bg-color,           #1e1e1e);
+      --sec:  var(--tg-theme-secondary-bg-color, #252526);
+      --text: var(--tg-theme-text-color,         #d4d4d4);
+      --hint: var(--tg-theme-hint-color,         #6a737d);
+      --btn:  var(--tg-theme-button-color,       #007acc);
+      --btnT: var(--tg-theme-button-text-color,  #ffffff);
+      --link: var(--tg-theme-link-color,         #007acc);
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      padding: 0 0 env(safe-area-inset-bottom);
+      min-height: 100vh;
+    }
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid rgba(255,255,255,.07);
+    }
+    .header-icon { font-size: 20px; }
+    .header-title { font-size: 16px; font-weight: 600; flex: 1; }
+    .header-count {
+      font-size: 11px;
+      color: var(--hint);
+      background: rgba(255,255,255,.07);
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+
+    /* Screens */
+    .screen { display: none; padding: 12px 16px; }
+    .screen.active { display: block; }
+
+    /* Session list */
+    .sessions { display: flex; flex-direction: column; gap: 8px; }
+    .session-card {
+      background: var(--sec);
+      border-radius: 10px;
+      padding: 11px 14px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: border-color .12s, background .12s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .session-card:active { background: rgba(255,255,255,.06); }
+    .session-card.selected { border-color: var(--btn); }
+    .s-label {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-weight: 500;
+      font-size: 13px;
+    }
+    .s-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .s-meta {
+      font-size: 11px;
+      color: var(--hint);
+      margin-top: 4px;
+      padding-left: 14px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Composer screen */
+    .back-btn {
+      background: none;
+      border: none;
+      color: var(--link);
+      font-size: 14px;
+      cursor: pointer;
+      padding: 4px 0 10px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--hint);
+      text-transform: uppercase;
+      letter-spacing: .07em;
+      margin-bottom: 7px;
+    }
+    .selected-session {
+      background: var(--sec);
+      border-radius: 10px;
+      padding: 10px 14px;
+      margin-bottom: 16px;
+      border-left: 3px solid var(--btn);
+    }
+    textarea {
+      width: 100%;
+      min-height: 110px;
+      background: var(--sec);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 10px;
+      color: var(--text);
+      font-size: 14px;
+      font-family: inherit;
+      padding: 10px 12px;
+      resize: vertical;
+      outline: none;
+      transition: border-color .12s;
+    }
+    textarea:focus { border-color: var(--btn); }
+    textarea::placeholder { color: var(--hint); }
+
+    /* Loading / empty */
+    .center {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 60px 20px;
+      text-align: center;
+      color: var(--hint);
+      font-size: 13px;
+    }
+    .center .icon { font-size: 36px; }
+
+    /* Success screen */
+    .success-icon { font-size: 52px; margin-bottom: 8px; }
+    .success-title { font-size: 18px; font-weight: 600; color: #4ade80; margin-bottom: 6px; }
+    .success-sub { font-size: 13px; color: var(--hint); }
+
+    /* Spinner */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      width: 22px; height: 22px;
+      border: 2px solid rgba(255,255,255,.15);
+      border-top-color: var(--btn);
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <span class="header-icon">🤖</span>
+  <span class="header-title">Fleet Console</span>
+  <span class="header-count" id="header-count">…</span>
+</div>
+
+<!-- Session list -->
+<div class="screen active" id="screen-list">
+  <div class="center" id="list-loading">
+    <div class="spinner"></div>
+    <span>Loading sessions…</span>
+  </div>
+</div>
+
+<!-- Composer -->
+<div class="screen" id="screen-compose">
+  <button class="back-btn" onclick="showList()">‹ Sessions</button>
+  <div class="section-label">Session</div>
+  <div class="selected-session" id="compose-session-info"></div>
+  <div class="section-label">Message</div>
+  <textarea id="msg-input" placeholder="Type your instruction for Claude…" oninput="onInput()"></textarea>
+</div>
+
+<!-- Success -->
+<div class="screen" id="screen-success">
+  <div class="center">
+    <div class="success-icon">✅</div>
+    <div class="success-title">Sent!</div>
+    <div class="success-sub" id="success-sub"></div>
+  </div>
+</div>
+
+<script>
+const tg = window.Telegram?.WebApp;
+if (tg) {
+  tg.expand();
+  tg.MainButton.hide();
+  tg.BackButton.hide();
+}
+
+const STATUS_COLOR = {
+  running:  '#4ade80',
+  idle:     '#60a5fa',
+  limited:  '#fbbf24',
+  error:    '#f87171',
+  starting: '#a78bfa',
+  ended:    '#6b7280',
+};
+
+let sessions = [];
+let activeSession = null;
+
+// ── Screens ───────────────────────────────────────────────────────────────────
+
+function show(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+function showList() {
+  show('screen-list');
+  if (tg) {
+    tg.MainButton.hide();
+    tg.BackButton.hide();
+    tg.MainButton.offClick(send);
+  }
+  activeSession = null;
+}
+
+function showCompose(session) {
+  activeSession = session;
+  const info = document.getElementById('compose-session-info');
+  info.innerHTML = `
+    <div class="s-label">
+      <span class="s-dot" style="background:${STATUS_COLOR[session.status] || '#6b7280'}"></span>
+      <strong>${esc(session.label || session.id)}</strong>
+    </div>
+    <div class="s-meta">${esc(session.cwd || '')}${session.model ? ' · ' + esc(session.model) : ''}</div>
+  `;
+  document.getElementById('msg-input').value = '';
+  show('screen-compose');
+  setTimeout(() => document.getElementById('msg-input').focus(), 100);
+
+  if (tg) {
+    tg.BackButton.show();
+    tg.BackButton.onClick(showList);
+    tg.MainButton.setText('Send');
+    tg.MainButton.disable();
+    tg.MainButton.show();
+    tg.MainButton.onClick(send);
+  }
+}
+
+function showSuccess(label, text) {
+  document.getElementById('success-sub').textContent = `"${text.slice(0, 60)}${text.length > 60 ? '…' : ''}" → ${label}`;
+  show('screen-success');
+  if (tg) {
+    tg.MainButton.setText('Close');
+    tg.MainButton.enable();
+    tg.MainButton.show();
+    tg.MainButton.offClick(send);
+    tg.MainButton.onClick(() => tg.close());
+    tg.BackButton.hide();
+  }
+  // Auto-close after 2.5 s if inside Telegram
+  if (tg) setTimeout(() => tg.close(), 2500);
+}
+
+// ── Data ──────────────────────────────────────────────────────────────────────
+
+async function loadSessions() {
+  try {
+    const res = await fetch('/api/sessions');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    sessions = (data.sessions || []).filter(s => s.status !== 'ended');
+    renderList();
+  } catch (e) {
+    document.getElementById('list-loading').innerHTML = `
+      <div class="center">
+        <div class="icon">⚠️</div>
+        <div>Could not reach Fleet Console</div>
+        <div style="font-size:12px;margin-top:4px">${esc(e.message)}</div>
+        <button onclick="loadSessions()" style="margin-top:12px;background:var(--btn);color:var(--btnT);border:none;border-radius:8px;padding:8px 18px;font-size:13px;cursor:pointer">Retry</button>
+      </div>
+    `;
+  }
+}
+
+function renderList() {
+  const count = sessions.length;
+  document.getElementById('header-count').textContent = count === 0 ? 'no sessions' : `${count} active`;
+  const el = document.getElementById('screen-list');
+  if (count === 0) {
+    el.innerHTML = `<div class="center"><div class="icon">💤</div><div>No active sessions</div><div>Start a session in the Fleet Console first.</div></div>`;
+    return;
+  }
+  el.innerHTML = `<div class="sessions">${sessions.map(s => `
+    <div class="session-card" onclick="showCompose(sessions.find(x=>x.id==='${esc(s.id)}'))">
+      <div class="s-label">
+        <span class="s-dot" style="background:${STATUS_COLOR[s.status] || '#6b7280'}"></span>
+        ${esc(s.label || s.id)}
+      </div>
+      <div class="s-meta">${esc(s.cwd || '')}${s.model ? ' · ' + esc(s.model) : ''}</div>
+    </div>
+  `).join('')}</div>`;
+}
+
+// ── Send ──────────────────────────────────────────────────────────────────────
+
+function onInput() {
+  const val = document.getElementById('msg-input').value.trim();
+  if (tg) {
+    if (val) tg.MainButton.enable(); else tg.MainButton.disable();
+  }
+}
+
+async function send() {
+  if (!activeSession) return;
+  const text = document.getElementById('msg-input').value.trim();
+  if (!text) return;
+
+  if (tg) { tg.MainButton.showProgress(); tg.MainButton.disable(); }
+
+  try {
+    const res = await fetch(`/api/sessions/${activeSession.id}/message`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    // Notify the bot (closes the mini app)
+    if (tg) tg.sendData(JSON.stringify({ sessionId: activeSession.id, label: activeSession.label, text }));
+    else showSuccess(activeSession.label, text);
+  } catch (e) {
+    if (tg) { tg.MainButton.hideProgress(); tg.MainButton.enable(); tg.showAlert('Failed: ' + e.message); }
+    else alert('Failed: ' + e.message);
+  }
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+loadSessions();
+</script>
+</body>
+</html>
