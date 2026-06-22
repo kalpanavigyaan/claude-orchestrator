@@ -2,6 +2,51 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { Session } from '../fleet/types';
 import { apiPost } from '../fleet/api';
 
+// ── Module-level icons (stable references, no remounting) ─────────────────────
+const IC = {
+  play: (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+      <path d="M4 2.5l9 5.5-9 5.5V2.5z"/>
+    </svg>
+  ),
+  pause: (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+      <rect x="3" y="2" width="4" height="12" rx="1"/>
+      <rect x="9" y="2" width="4" height="12" rx="1"/>
+    </svg>
+  ),
+  stop: (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+      <rect x="2" y="2" width="12" height="12" rx="1.5"/>
+    </svg>
+  ),
+  dismiss: (
+    <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <line x1="3" y1="3" x2="13" y2="13"/><line x1="13" y1="3" x2="3" y2="13"/>
+    </svg>
+  ),
+};
+
+function CtrlBtn({ icon, title, color, onClick }: {
+  icon: React.ReactNode; title: string; color: string; onClick: (e: React.MouseEvent) => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      style={{
+        background: 'none', border: 'none', cursor: 'pointer',
+        color, padding: '2px', display: 'flex', alignItems: 'center',
+        borderRadius: 3, flexShrink: 0, opacity: 0.55, transition: 'opacity .1s, background .1s',
+      }}
+      onMouseEnter={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.background = 'rgba(255,255,255,.08)'; }}
+      onMouseLeave={e => { e.currentTarget.style.opacity = '0.55'; e.currentTarget.style.background = 'none'; }}
+    >
+      {icon}
+    </button>
+  );
+}
+
 interface Props {
   sessions: Session[];
   selectedId: string | null;
@@ -132,51 +177,6 @@ export default function SessionsPane({ sessions, selectedId, onSelect, onDismiss
     e.stopPropagation();
     onSelect(s.id);
     setCtxMenu({ x: e.clientX, y: e.clientY, session: s });
-  }
-
-  // Small SVG icon buttons for play / pause / stop / dismiss
-  const IC = {
-    play: (
-      <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
-        <path d="M4 2.5l9 5.5-9 5.5V2.5z"/>
-      </svg>
-    ),
-    pause: (
-      <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
-        <rect x="3" y="2" width="4" height="12" rx="1"/>
-        <rect x="9" y="2" width="4" height="12" rx="1"/>
-      </svg>
-    ),
-    stop: (
-      <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
-        <rect x="2" y="2" width="12" height="12" rx="1.5"/>
-      </svg>
-    ),
-    dismiss: (
-      <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-        <line x1="3" y1="3" x2="13" y2="13"/><line x1="13" y1="3" x2="3" y2="13"/>
-      </svg>
-    ),
-  };
-
-  function CtrlBtn({ icon, title, color, onClick }: {
-    icon: React.ReactNode; title: string; color: string; onClick: (e: React.MouseEvent) => void;
-  }) {
-    return (
-      <button
-        onClick={onClick}
-        title={title}
-        style={{
-          background: 'none', border: 'none', cursor: 'pointer',
-          color, padding: '2px', display: 'flex', alignItems: 'center',
-          borderRadius: 3, flexShrink: 0, opacity: 0.55, transition: 'opacity .1s, background .1s',
-        }}
-        onMouseEnter={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.background = 'rgba(255,255,255,.08)'; }}
-        onMouseLeave={e => { e.currentTarget.style.opacity = '0.55'; e.currentTarget.style.background = 'none'; }}
-      >
-        {icon}
-      </button>
-    );
   }
 
   function renderRow(s: Session) {

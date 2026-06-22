@@ -26,8 +26,9 @@ interface Props {
 const tabBtn = (active: boolean): React.CSSProperties => ({
   flex: 1, padding: '5px 0', fontSize: 11, fontWeight: active ? 600 : 400,
   background: active ? 'var(--ed-bg)' : 'transparent',
+  borderTop: 'none', borderLeft: 'none', borderRight: 'none',
   borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
-  border: 'none', cursor: 'pointer', color: active ? 'var(--ed-fg)' : 'var(--muted)',
+  cursor: 'pointer', color: active ? 'var(--ed-fg)' : 'var(--muted)',
 });
 
 // ── Current queue tab ────────────────────────────────────────────────────────
