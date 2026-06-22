@@ -8,6 +8,7 @@ logs/
 *.log
 .env
 .env.*
+!.env.example
 
 # node (subprojects also have their own .gitignore)
 node_modules/
