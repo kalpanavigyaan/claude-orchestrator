@@ -267,8 +267,9 @@ export default function SessionsPane({ sessions, selectedId, onSelect, onDismiss
             />
           ) : (
             <span title={`${s.label} — right-click or F2 to rename`} style={{
-              fontSize: 12, fontWeight: 500, overflow: 'hidden',
+              fontSize: 12, fontWeight: 600, overflow: 'hidden',
               textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
+              color: isSelected ? '#fff' : isDormant ? '#c8c8c8' : '#e8e8e8',
             }}>
               {s.label || s.id}
             </span>
@@ -316,7 +317,7 @@ export default function SessionsPane({ sessions, selectedId, onSelect, onDismiss
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 1, paddingLeft: 13, fontSize: 10 }}>
           <span style={{ color: hostColor, fontWeight: 600 }}>{s.host}</span>
           {s.distro && <span style={{ color: '#9cdcfe', opacity: 0.8 }}>· {s.distro}</span>}
-          {repo && <span style={{ color: 'var(--muted)' }}>· {repo}</span>}
+          {repo && <span style={{ color: '#7dd3fc', fontWeight: 500 }}>· {repo}</span>}
           {s.status !== 'idle' && s.status !== 'limited' && (
             <span style={{
               marginLeft: 'auto', fontSize: 9, padding: '1px 4px', borderRadius: 3, flexShrink: 0,
