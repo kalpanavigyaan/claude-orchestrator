@@ -445,6 +445,11 @@ export function FleetConsole({ onSwitchToEditor }: { onSwitchToEditor?: () => vo
                 sessions={sessionsWithOverrides}
                 selectedId={selectedId}
                 onSelect={(id) => { handleTabSelect(id); }}
+                onDismiss={(id) => {
+                  // Optimistically remove from tab bar; SSE will confirm the map update
+                  setTabOrder(prev => prev.filter(t => t !== id));
+                  if (selectedId === id) setSelectedId(null);
+                }}
                 resetAt={fleetState?.account?.resetAt}
                 onRename={handleRenameSession}
               />

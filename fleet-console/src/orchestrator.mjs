@@ -127,6 +127,8 @@ const fleetSse = new Set();
 // Session IDs with a pending auto-compact (prevents repeated triggers until context drops).
 const compactPending = new Set();
 let manualAccountReset = null;
+/** Scheduled future sessions: id → { id, label, fireAt, spec, status: "pending"|"fired"|"cancelled" } */
+const scheduledItems = new Map();
 /**
  * Latest account-wide plan usage, from the SDK's /usage data (same across sessions/devices). Keyed
  * by window (five_hour, seven_day, seven_day_opus, …); each value is { type, utilization (0-100),
@@ -161,6 +163,11 @@ function readBody(req) {
     });
     req.on("error", () => resolve({}));
   });
+}
+
+/** Strip characters that would confuse a message context (newlines, quotes). */
+function escapeForMessage(s) {
+  return String(s || "").replace(/[\r\n"]/g, " ").trim();
 }
 
 function sendJson(res, status, obj) {
@@ -235,11 +242,19 @@ function sessionSummary(s) {
     messageQueue: s.messageQueue ?? [],
     queueMode: s.queueMode || 'same',
     completedCount: Array.isArray(s.completedInstructions) ? s.completedInstructions.length : 0,
+    completedInstructions: Array.isArray(s.completedInstructions) ? s.completedInstructions : [],
     pendingApprovals: [...s.pendingApprovals.values()],
     lastResult: s.lastResult || null,
     createdAt: s.createdAt,
     sessionDir: s.sessionDir || null,
     instructionsDir: s.instructionsDir || null,
+    // health
+    toolCallsThisTurn: s.toolCallsThisTurn || 0,
+    lastToolAt: s.lastToolAt || null,
+    lastToolName: s.lastToolName || null,
+    blockedSince: s.blockedSince || null,
+    // compact log
+    compactLog: Array.isArray(s.compactLog) ? s.compactLog : [],
   };
 }
 
@@ -339,7 +354,7 @@ function applyUsageReport(report) {
 
 // Bump on any public/ UI change. The client compares its own APP_BUILD to this and shows a
 // "you're running an old version, refresh" banner on mismatch — ends the "is my page stale?" guessing.
-const BUILD = "2026-06-17a";
+const BUILD = "2026-06-21b";
 
 function fleetSnapshot() {
   return {
@@ -357,6 +372,7 @@ function fleetSnapshot() {
     commands: availableCommands,
     toolServer: { enabled: TOOL_SERVER_ENABLED, port: TOOL_SERVER_PORT },
     sessions: [...sessions.values()].map(sessionSummary),
+    schedule: [...scheduledItems.values()].filter(i => i.status === "pending"),
   };
 }
 
@@ -429,6 +445,7 @@ function sessionRecordObject(s) {
     queueMode: s.queueMode || 'same',
     autoCompact: !!s.autoCompact,
     autoCompactThreshold: typeof s.autoCompactThreshold === 'number' ? s.autoCompactThreshold : 0.65,
+    compactLog: Array.isArray(s.compactLog) ? s.compactLog.slice() : [],
   };
 }
 
@@ -817,11 +834,19 @@ function loadGlobalInstructions() {
  * Future resumes will load only the summary instead of the full (potentially huge) history.
  * Records the current assistant-turn count so the auto-compact guard knows when to compact again.
  */
-function deliverCompact(s) {
+function deliverCompact(s, trigger = "manual") {
   if (!runnerAlive(s)) return false;
-  s.lastCompactedCount = s.messages.filter(m => m.role === "assistant").length;
+  const assistantTurns = s.messages.filter(m => m.role === "assistant").length;
+  s.lastCompactedCount = assistantTurns;
+  // Track compact event for the UI log
+  if (!Array.isArray(s.compactLog)) s.compactLog = [];
+  const ctxPct = s.lastResult
+    ? Math.round(((s.lastResult.usage && s.lastResult.usage.input_tokens || 0) + (s.lastResult.usage && s.lastResult.usage.cache_read_input_tokens || 0)) / 200000 * 100)
+    : 0;
+  s.compactLog.push({ ts: now(), trigger, assistantTurns, ctxPct });
+  if (s.compactLog.length > 20) s.compactLog.shift();
   writeToRunner(s, { type: "compact" });
-  recordMessage(s, { role: "system", text: "Compacting conversation history — future resumes will load a summary instead of the full transcript, saving tokens." });
+  recordMessage(s, { role: "system", text: `Compacting conversation history (${assistantTurns} turns, ~${ctxPct}% context) — future resumes will load a summary instead of the full transcript, saving tokens.` });
   return true;
 }
 
@@ -1385,6 +1410,13 @@ function createSession(spec) {
     dirty: true,
     proc: null,
     lastCompactedCount: 0, // assistant-turn count when we last compacted; guards against re-compact loops
+    // health tracking
+    toolCallsThisTurn: 0,
+    lastToolAt: null,
+    lastToolName: null,
+    blockedSince: null,
+    // compact log (persisted to disk)
+    compactLog: Array.isArray(spec.compactLog) ? spec.compactLog.slice() : [],
   };
 
   sessions.set(id, session);
@@ -1462,6 +1494,7 @@ function resumeSession(rel) {
     queueMode: meta.queueMode || undefined,
     autoCompact: meta.autoCompact === true ? true : undefined,
     autoCompactThreshold: typeof meta.autoCompactThreshold === 'number' ? meta.autoCompactThreshold : undefined,
+    compactLog: Array.isArray(meta.compactLog) ? meta.compactLog : undefined,
     sessionDirOverride: dir,
     preload,
     sdkSessionId: meta.sdkSessionId || null,
@@ -1577,16 +1610,18 @@ function handleRunnerEvent(s, event) {
       } else if (event.status === "idle") {
         s.status = "idle";
         s.activity = null;
+        s.blockedSince = null;
+        s.toolCallsThisTurn = 0;
         // Deliver next queued instruction if one is waiting
         if (s.messageQueue && s.messageQueue.length > 0 && runnerAlive(s)) {
-          const next = s.messageQueue.shift();
+          const nextItem = s.messageQueue.shift();
+          const nextText = typeof nextItem === "string" ? nextItem : (nextItem && nextItem.text) || "";
           if (!Array.isArray(s.completedInstructions)) s.completedInstructions = [];
-          s.completedInstructions.push({ text: next, deliveredAt: now() });
+          s.completedInstructions.push({ text: nextText, deliveredAt: now() });
           if (s.queueMode === 'fresh') {
             // Start a new independent session for this instruction instead of continuing this one.
-            // Good for unrelated tasks where you don't want context to accumulate.
             createSession({
-              label: s.label + ' › ' + next.slice(0, 40).replace(/\s+/g, ' '),
+              label: s.label + ' › ' + nextText.slice(0, 40).replace(/\s+/g, ' '),
               host: s.host, distro: s.distro || undefined, cwd: s.cwd,
               model: s.model || undefined, mode: s.mode || undefined,
               permissionMode: s.permissionMode || undefined,
@@ -1597,14 +1632,17 @@ function handleRunnerEvent(s, event) {
               additionalDirectories: Array.isArray(s.additionalDirectories) ? s.additionalDirectories : undefined,
               directoryAccess: s.directoryAccess || undefined,
               autoContinue: s.autoContinue, autoRetryApiError: s.autoRetryApiError,
-              initialPrompt: next,
+              initialPrompt: nextText,
             });
             recordMessage(s, { role: "system", text: `queue [new-session]: started fresh session for instruction (${s.messageQueue.length} remaining)` });
           } else {
+            recordMessage(s, { role: "user", text: nextText });
             recordMessage(s, { role: "system", text: `queue: delivering next instruction (${s.messageQueue.length} remaining)` });
-            deliverUserText(s, next);
+            deliverUserText(s, nextText);
+            // Store current item as "in-flight" so the result handler can check successPattern/retry
+            s._queueInFlight = nextItem;
           }
-          persistSession(s); // save updated queue + completedInstructions to disk
+          persistSession(s);
         }
       } else if (event.status === "error") {
         s.status = "error";
@@ -1623,9 +1661,13 @@ function handleRunnerEvent(s, event) {
       break;
     case "assistant":
       s.status = "running";
+      s.toolCallsThisTurn = 0; // reset per-turn counter at start of a new response
       recordMessage(s, { role: "assistant", text: event.text });
       break;
     case "tool_use":
+      s.toolCallsThisTurn = (s.toolCallsThisTurn || 0) + 1;
+      s.lastToolName = event.name || null;
+      s.lastToolAt = now();
       recordMessage(s, { role: "tool", name: event.name, input: event.input });
       break;
     case "activity":
@@ -1682,6 +1724,7 @@ function handleRunnerEvent(s, event) {
       }
       break;
     case "approval_request":
+      if (!s.blockedSince && s.pendingApprovals.size === 0) s.blockedSince = now();
       s.pendingApprovals.set(event.id, { id: event.id, tool: event.tool, input: event.input, ts: now() });
       pushSessionEvent(s, { kind: "approval", approval: { id: event.id, tool: event.tool, input: event.input } });
       break;
@@ -1701,8 +1744,35 @@ function handleRunnerEvent(s, event) {
       s.lastResult = { subtype: event.subtype, cost: event.cost, turns: event.turns, usage: event.usage };
       s.status = "idle";
       s.activity = null;
+      s.blockedSince = null;
       // Always record a result message so the per-turn token stats are always visible.
       recordMessage(s, { role: "result", text: event.resultText || "", turnUsage, turnCost, turns: event.turns });
+
+      // Queue success pattern + retry: check if the result matches the in-flight item's pattern.
+      if (s._queueInFlight && typeof s._queueInFlight === "object") {
+        const item = s._queueInFlight;
+        s._queueInFlight = null;
+        const resultText = event.resultText || "";
+        const pattern = item.successPattern ? String(item.successPattern) : null;
+        let patternPassed = true;
+        if (pattern) {
+          try { patternPassed = new RegExp(pattern, "i").test(resultText); } catch { patternPassed = true; }
+        }
+        if (!patternPassed) {
+          const maxRetries = typeof item.maxRetries === "number" ? item.maxRetries : 0;
+          const retryCount = typeof item.retryCount === "number" ? item.retryCount : 0;
+          if (retryCount < maxRetries) {
+            // Re-insert at front of queue with incremented retry count
+            if (!s.messageQueue) s.messageQueue = [];
+            s.messageQueue.unshift({ ...item, retryCount: retryCount + 1 });
+            recordMessage(s, { role: "system", text: `queue retry ${retryCount + 1}/${maxRetries}: result did not match pattern "${pattern}"` });
+            persistSession(s);
+          } else if (maxRetries > 0) {
+            recordMessage(s, { role: "system", text: `queue: task failed after ${maxRetries} retries (pattern "${pattern}" never matched)` });
+            persistSession(s);
+          }
+        }
+      }
 
       // Auto-compact: if enabled, trigger /compact when context exceeds the threshold.
       // Uses the per-turn cache_read delta as a proxy for current context window usage —
@@ -1712,8 +1782,7 @@ function handleRunnerEvent(s, event) {
         const threshold = typeof s.autoCompactThreshold === 'number' ? s.autoCompactThreshold : 0.65;
         if (ctxPct >= threshold && !compactPending.has(s.id)) {
           compactPending.add(s.id);
-          recordMessage(s, { role: "system", text: `auto-compact: context at ${Math.round(ctxPct * 100)}% ≥ ${Math.round(threshold * 100)}% threshold — compressing…` });
-          deliverCompact(s);
+          deliverCompact(s, "auto");
         } else if (ctxPct < threshold * 0.5) {
           // Context has dropped (post-compact or new session) — re-arm the trigger.
           compactPending.delete(s.id);
@@ -1742,6 +1811,16 @@ function handleRunnerEvent(s, event) {
 // ---------------------------------------------------------------------------
 
 function schedulerTick() {
+  // Fire any scheduled sessions whose fireAt has passed
+  for (const item of scheduledItems.values()) {
+    if (item.status !== "pending") continue;
+    if (now() < item.fireAt) continue;
+    item.status = "fired";
+    const s = createSession(item.spec);
+    recordMessage(s, { role: "system", text: `Scheduled session fired (scheduled at ${new Date(item.fireAt).toLocaleString()}).` });
+    broadcastFleet();
+  }
+
   for (const s of sessions.values()) {
     // Auto-retry after transient API rate limit error ("Server is temporarily limiting requests")
     if (s.status === "error" && s.autoRetryApiError !== false && s.nextRetryAt && now() >= s.nextRetryAt) {
@@ -2026,6 +2105,46 @@ const server = http.createServer(async (req, res) => {
     } catch (e) {
       sendJson(res, 200, { path: dir, parent: null, entries: [], error: e.message });
     }
+    return;
+  }
+
+  // Scheduled sessions: list, create, cancel
+  if (pathname === "/api/schedule" && method === "GET") {
+    sendJson(res, 200, { items: [...scheduledItems.values()] });
+    return;
+  }
+  if (pathname === "/api/schedule" && method === "POST") {
+    const body = await readBody(req);
+    if (!body.cwd || !body.fireAt) {
+      sendJson(res, 400, { ok: false, reason: "cwd and fireAt are required" });
+      return;
+    }
+    const id = crypto.randomBytes(5).toString("hex");
+    const fireAt = Number(body.fireAt);
+    if (!isFinite(fireAt) || fireAt < now()) {
+      sendJson(res, 400, { ok: false, reason: "fireAt must be a future timestamp (ms)" });
+      return;
+    }
+    const item = {
+      id,
+      label: String(body.label || body.cwd || id),
+      fireAt,
+      spec: { ...body, label: String(body.label || body.cwd || id) },
+      status: "pending",
+      createdAt: now(),
+    };
+    scheduledItems.set(id, item);
+    sendJson(res, 200, { ok: true, id, item });
+    broadcastFleet();
+    return;
+  }
+  const schedDel = pathname.match(/^\/api\/schedule\/([^/]+)$/);
+  if (schedDel && method === "DELETE") {
+    const item = scheduledItems.get(schedDel[1]);
+    if (!item) { sendJson(res, 404, { ok: false }); return; }
+    item.status = "cancelled";
+    sendJson(res, 200, { ok: true });
+    broadcastFleet();
     return;
   }
 
@@ -2329,6 +2448,17 @@ const server = http.createServer(async (req, res) => {
         }, 1000);
       }
       sendJson(res, 200, { ok: true });
+    } else if (verb === "dismiss") {
+      // Remove a session from the active list. Refuses if the runner is currently running.
+      if (s.status === "running" || s.status === "starting") {
+        sendJson(res, 409, { ok: false, reason: "cannot dismiss a running session — stop it first" });
+        return;
+      }
+      // Kill the runner process if still alive (idle sessions may still have a live process)
+      try { if (s.proc && !s.proc.killed) { writeToRunner(s, { type: "shutdown" }); s.proc.kill(); } } catch { /* ignore */ }
+      sessions.delete(s.id);
+      broadcastFleet();
+      sendJson(res, 200, { ok: true });
     } else if (verb === "auto-continue" || verb === "set-auto-continue") {
       s.autoContinue = (body.enabled ?? body.autoContinue) !== false;
       sendJson(res, 200, { ok: true });
@@ -2352,7 +2482,15 @@ const server = http.createServer(async (req, res) => {
       const text = String(body.text || "").trim();
       if (!text) { sendJson(res, 400, { ok: false, reason: "text is required" }); return; }
       if (!s.messageQueue) s.messageQueue = [];
-      s.messageQueue.push(text);
+      const qId = crypto.randomBytes(4).toString("hex");
+      const qItem = {
+        id: qId,
+        text,
+        maxRetries: typeof body.maxRetries === "number" ? Math.max(0, Math.min(body.maxRetries, 10)) : 0,
+        retryCount: 0,
+        successPattern: body.successPattern ? String(body.successPattern) : null,
+      };
+      s.messageQueue.push(qItem);
       persistSession(s);
       sendJson(res, 200, { ok: true, queue: s.messageQueue });
     } else if (verb === "queue-remove") {
@@ -2391,6 +2529,26 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 404, { ok: false, reason: "unknown action" });
     }
     broadcastFleet();
+    return;
+  }
+
+  // Inter-session messaging: POST /api/sessions/:id/send-to { targetId, text }
+  const sendTo = pathname.match(/^\/api\/sessions\/([^/]+)\/send-to$/);
+  if (sendTo && method === "POST") {
+    const src = sessions.get(sendTo[1]);
+    if (!src) { sendJson(res, 404, { ok: false }); return; }
+    const body = await readBody(req);
+    const text = String(body.text || "").trim();
+    const targetId = String(body.targetId || "");
+    if (!text || !targetId) { sendJson(res, 400, { ok: false, reason: "text and targetId required" }); return; }
+    const tgt = sessions.get(targetId);
+    if (!tgt) { sendJson(res, 404, { ok: false, reason: "target session not found" }); return; }
+    const wrapped = `[From session "${escapeForMessage(src.label)}"]: ${text}`;
+    recordMessage(tgt, { role: "user", text: wrapped });
+    const r = deliverUserText(tgt, wrapped);
+    recordMessage(src, { role: "system", text: `Sent to "${tgt.label}": ${text.slice(0, 80)}${text.length > 80 ? "…" : ""}` });
+    broadcastFleet();
+    sendJson(res, 200, { ok: r.alive });
     return;
   }
 
@@ -2501,8 +2659,70 @@ setInterval(broadcastFleet, 1000);
 setInterval(persistDirtySessions, 1000);
 setInterval(usageTick, USAGE_POLL_MS);
 
+/**
+ * On startup, scan every saved session.json for sessions that were still running or idle when the
+ * orchestrator last shut down and auto-resume them so the agent keeps working unattended.
+ * Only resumes sessions whose status was "running" or "idle" (not "ended", "error", "limited").
+ */
+async function restoreLiveSessions() {
+  if (config.sessions && config.sessions.autoRestore === false) return;
+  let history;
+  try { history = listHistory(); } catch { return; }
+  const toRestore = history.filter(h => h.status === "running" || h.status === "idle");
+  if (!toRestore.length) return;
+  console.log(`[fleet-console] restoring ${toRestore.length} live session(s) from disk…`);
+  for (const h of toRestore) {
+    try {
+      const s = resumeSession(h.rel);
+      if (s) {
+        recordMessage(s, { role: "system", text: "Auto-restored after orchestrator restart. Continuing previous work." });
+        console.log(`[fleet-console]   restored: ${s.label}`);
+      }
+    } catch (e) {
+      console.warn(`[fleet-console]   could not restore session ${h.rel}: ${e}`);
+    }
+  }
+}
+
+/**
+ * For each registered WSL distro, compare the hash of the local runner.mjs against the staged
+ * copy inside the distro. If they differ, copy the updated runner in-place so the distro runner
+ * always matches the host without requiring a manual re-run of setup-wsl-distro.ps1.
+ */
+async function checkWslRunnerStaleness() {
+  if (process.platform !== "win32") return;
+  const wslRunners = loadWslRunners();
+  if (!Object.keys(wslRunners).length) return;
+  // Hash the local runner.mjs
+  let localHash;
+  try {
+    const buf = fs.readFileSync(RUNNER_PATH);
+    localHash = crypto.createHash("sha256").update(buf).digest("hex");
+  } catch { return; }
+  for (const [distro, reg] of Object.entries(wslRunners)) {
+    if (!reg || !reg.runnerPath) continue;
+    const stagedPath = reg.runnerPath;
+    // Hash the in-distro runner
+    const r = await runCapture("wsl.exe", ["-d", distro, "--", "sha256sum", stagedPath], { timeoutMs: 8000 });
+    if (!r.ok) continue;
+    const remoteHash = r.out.trim().split(/\s+/)[0] || "";
+    if (remoteHash === localHash) continue;
+    console.log(`[fleet-console] WSL runner stale for ${distro} — copying updated runner…`);
+    // Copy via stdin pipe: `cat > <staged path>`
+    const mnt = toMnt(RUNNER_PATH);
+    const cp = await runCapture("wsl.exe", ["-d", distro, "--", "cp", mnt, stagedPath], { timeoutMs: 12000 });
+    if (cp.ok) {
+      console.log(`[fleet-console]   updated ${distro}:${stagedPath}`);
+    } else {
+      console.warn(`[fleet-console]   failed to update ${distro}:${stagedPath}: ${cp.err}`);
+    }
+  }
+}
+
 // Resolve the Windows host IP before starting so WSL runners know where to find the tool server.
-resolveWindowsHostIP().then(() => {
+resolveWindowsHostIP().then(async () => {
+  await checkWslRunnerStaleness();
+  await restoreLiveSessions();
   server.listen(PORT, HOST, () => {
     const auth = TOKEN ? " (token required)" : " (no token — set FLEET_TOKEN to lock down)";
     console.log(`[fleet-console] http://${HOST}:${PORT}${auth}`);
