@@ -25,7 +25,27 @@ const IC = {
       <line x1="3" y1="3" x2="13" y2="13"/><line x1="13" y1="3" x2="3" y2="13"/>
     </svg>
   ),
+  pin: (
+    <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 2l5 5-2 2-3-1-3 4-1-1 4-3-1-3 2-2z"/><line x1="2" y1="14" x2="6" y2="10"/>
+    </svg>
+  ),
+  pinFilled: (
+    <svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 2l5 5-2 2-3-1-3 4-1-1 4-3-1-3 2-2z"/><line x1="2" y1="14" x2="6" y2="10" stroke="currentColor" strokeWidth="1.6"/>
+    </svg>
+  ),
 };
+
+const LS_PINS = 'fleet-pinned-sessions';
+
+function loadPins(): Set<string> {
+  try { return new Set(JSON.parse(localStorage.getItem(LS_PINS) ?? '[]')); }
+  catch { return new Set(); }
+}
+function savePins(set: Set<string>) {
+  localStorage.setItem(LS_PINS, JSON.stringify([...set]));
+}
 
 function CtrlBtn({ icon, title, color, onClick }: {
   icon: React.ReactNode; title: string; color: string; onClick: (e: React.MouseEvent) => void;
@@ -113,13 +133,25 @@ export default function SessionsPane({ sessions, selectedId, onSelect, onDismiss
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameVal, setRenameVal]   = useState('');
   const [ctxMenu, setCtxMenu]       = useState<CtxMenu | null>(null);
-  const [dormantOpen, setDormantOpen] = useState(true);
+  const [pins, setPins]             = useState<Set<string>>(loadPins);
   const renameRef = useRef<HTMLInputElement>(null);
 
+  function togglePin(id: string) {
+    setPins(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      savePins(next);
+      return next;
+    });
+  }
+
   // Exclude ended sessions — they live in History pane
-  const visible = sessions.filter(s => s.status !== 'ended');
-  const active  = visible.filter(s => ACTIVE_STATUSES.has(s.status));
-  const dormant = visible.filter(s => !ACTIVE_STATUSES.has(s.status)); // idle + error
+  const visible  = sessions.filter(s => s.status !== 'ended');
+  const pinned   = visible.filter(s => pins.has(s.id));
+  const unpinned = visible.filter(s => !pins.has(s.id));
+  // Active (running etc.) always visible; idle/error hidden unless pinned
+  const active   = unpinned.filter(s => ACTIVE_STATUSES.has(s.status));
+  const hidden   = unpinned.filter(s => !ACTIVE_STATUSES.has(s.status));
 
   // F2 to rename selected session
   useEffect(() => {
@@ -182,6 +214,7 @@ export default function SessionsPane({ sessions, selectedId, onSelect, onDismiss
   function renderRow(s: Session) {
     const isSelected = s.id === selectedId;
     const isDormant  = !ACTIVE_STATUSES.has(s.status);
+    const isPinned   = pins.has(s.id);
     const dotColor   = STATUS_COLOR[s.status] ?? '#6a737d';
     const hostColor  = HOST_COLOR[s.host] ?? '#9cdcfe';
     const repo       = s.cwd ? (s.cwd.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? s.cwd) : '';
@@ -190,7 +223,7 @@ export default function SessionsPane({ sessions, selectedId, onSelect, onDismiss
     const canPlay    = s.status === 'idle' || s.status === 'error' || s.status === 'limited';
     const canPause   = s.status === 'running';
     const canStop    = s.status === 'running' || s.status === 'starting' || s.status === 'idle';
-    const canDismiss = !ACTIVE_STATUSES.has(s.status);
+    const canDismiss = !ACTIVE_STATUSES.has(s.status) && !isPinned;
 
     return (
       <div
@@ -266,6 +299,12 @@ export default function SessionsPane({ sessions, selectedId, onSelect, onDismiss
               <CtrlBtn icon={IC.stop} title="Stop runner" color="#f87171"
                 onClick={e => { e.stopPropagation(); apiPost(`/api/sessions/${s.id}/stop`, {}); }} />
             )}
+            <CtrlBtn
+              icon={isPinned ? IC.pinFilled : IC.pin}
+              title={isPinned ? 'Unpin session' : 'Pin to top'}
+              color={isPinned ? '#fbbf24' : 'var(--muted)'}
+              onClick={e => { e.stopPropagation(); togglePin(s.id); }}
+            />
             {canDismiss && (
               <CtrlBtn icon={IC.dismiss} title="Remove from list" color="var(--muted)"
                 onClick={e => dismiss(s, e)} />
@@ -325,46 +364,65 @@ export default function SessionsPane({ sessions, selectedId, onSelect, onDismiss
           </div>
         ) : (
           <>
-            {/* ── Active section ──────────────────────────────────── */}
-            {active.length > 0 && active.map(renderRow)}
-
-            {/* ── Dormant (idle / error) section ──────────────────── */}
-            {dormant.length > 0 && (
+            {/* ── Pinned section ─────────────────────────────────── */}
+            {pinned.length > 0 && (
               <>
-                <div
-                  onClick={() => setDormantOpen(o => !o)}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                <div style={{
+                  padding: '3px 8px', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em',
+                  textTransform: 'uppercase', color: '#fbbf2499',
+                  background: 'rgba(251,191,36,.05)',
+                  borderBottom: '1px solid var(--border)', userSelect: 'none',
+                }}>
+                  ⭐ Pinned · {pinned.length}
+                </div>
+                {pinned.map(renderRow)}
+              </>
+            )}
+
+            {/* ── Active (running / starting / limited) ─────────── */}
+            {active.length > 0 && (
+              <>
+                {pinned.length > 0 && (
+                  <div style={{
                     padding: '3px 8px', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em',
                     textTransform: 'uppercase', color: 'var(--muted)',
                     background: 'rgba(255,255,255,.03)',
-                    borderTop: active.length > 0 ? '1px solid var(--border)' : 'none',
-                    borderBottom: '1px solid var(--border)',
-                    cursor: 'pointer', userSelect: 'none',
-                  }}
-                >
-                  <span>{dormantOpen ? '▾' : '▸'} Idle · {dormant.length}</span>
-                  {dormant.length > 0 && (
-                    <button
-                      onClick={e => { e.stopPropagation(); dismissAll(dormant); }}
-                      title="Remove all idle sessions from list"
-                      style={{
-                        background: 'none', border: 'none', cursor: 'pointer',
-                        fontSize: 10, color: 'var(--muted)', padding: '0 2px',
-                      }}
-                      onMouseEnter={e => (e.currentTarget.style.color = 'var(--red)')}
-                      onMouseLeave={e => (e.currentTarget.style.color = 'var(--muted)')}
-                    >
-                      Clear all
-                    </button>
-                  )}
-                </div>
-                {dormantOpen && dormant.map(renderRow)}
+                    borderBottom: '1px solid var(--border)', userSelect: 'none',
+                  }}>Active · {active.length}</div>
+                )}
+                {active.map(renderRow)}
               </>
+            )}
+
+            {pinned.length === 0 && active.length === 0 && (
+              <div style={{ padding: '12px 10px', fontSize: 11, color: 'var(--muted)', fontStyle: 'italic' }}>
+                Pin sessions to keep them here.
+              </div>
             )}
           </>
         )}
       </div>
+
+      {/* ── Hidden idle count ───────────────────────────────────── */}
+      {hidden.length > 0 && (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '4px 8px', fontSize: 10, color: 'var(--muted)',
+          borderTop: '1px solid var(--border)', flexShrink: 0,
+          background: 'rgba(255,255,255,.02)',
+        }}>
+          <span title="Pin sessions to keep them visible here">{hidden.length} idle hidden · pin to show</span>
+          <button
+            onClick={() => dismissAll(hidden)}
+            title="Remove all hidden idle sessions from list"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, color: 'var(--muted)', padding: '0 2px' }}
+            onMouseEnter={e => (e.currentTarget.style.color = 'var(--red)')}
+            onMouseLeave={e => (e.currentTarget.style.color = 'var(--muted)')}
+          >
+            Clear all
+          </button>
+        </div>
+      )}
 
       {/* Right-click context menu */}
       {ctxMenu && (
@@ -380,7 +438,13 @@ export default function SessionsPane({ sessions, selectedId, onSelect, onDismiss
             Rename
             <span style={{ marginLeft: 'auto', fontSize: 10, opacity: .5 }}>F2</span>
           </div>
-          {!ACTIVE_STATUSES.has(ctxMenu.session.status) && (
+          <div className="ctx-item" onClick={() => { togglePin(ctxMenu.session.id); setCtxMenu(null); }}>
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 2l5 5-2 2-3-1-3 4-1-1 4-3-1-3 2-2z"/><line x1="2" y1="14" x2="6" y2="10"/>
+            </svg>
+            {pins.has(ctxMenu.session.id) ? 'Unpin' : 'Pin to top'}
+          </div>
+          {!ACTIVE_STATUSES.has(ctxMenu.session.status) && !pins.has(ctxMenu.session.id) && (
             <>
               <div className="ctx-sep" />
               <div className="ctx-item danger" onClick={e => dismiss(ctxMenu.session, e)}>
