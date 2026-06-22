@@ -29,6 +29,7 @@ export default function ControlsPane({ session, models, onHistoryResume, viewing
   const [tab, setTab] = useState<Tab>('config');
   const [compacting, setCompacting] = useState(false);
 
+  useEffect(() => { setCompacting(false); }, [session?.id]);
   useEffect(() => {
     if (session?.status === 'idle' || session?.status === 'error') setCompacting(false);
   }, [session?.status]);
