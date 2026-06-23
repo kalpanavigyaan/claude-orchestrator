@@ -134,7 +134,53 @@ export default function SessionsPane({ sessions, selectedId, onSelect, onDismiss
   const [renameVal, setRenameVal]   = useState('');
   const [ctxMenu, setCtxMenu]       = useState<CtxMenu | null>(null);
   const [pins, setPins]             = useState<Set<string>>(loadPins);
+  // Sessions that should stay in this pane even after they go idle: ones explicitly added from
+  // History this app-session, plus any that were active at some point since the app loaded.
+  // Reset on app restart (so a fresh start shows only active/pinned — idle ones live in History).
+  const [stickyIds, setStickyIds]   = useState<Set<string>>(new Set());
   const renameRef = useRef<HTMLInputElement>(null);
+
+  // Remember any session that is (or becomes) active — it should remain visible after it goes idle.
+  useEffect(() => {
+    setStickyIds(prev => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const s of sessions) {
+        if ((ACTIVE_STATUSES.has(s.status) || s.status === 'error') && !next.has(s.id)) {
+          next.add(s.id); changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [sessions]);
+
+  // HistoryPane fires these as its checkboxes are toggled: add → keep here; remove → drop it.
+  useEffect(() => {
+    function onAdded(e: Event) {
+      const ids = (e as CustomEvent).detail as string[];
+      if (!Array.isArray(ids) || ids.length === 0) return;
+      setStickyIds(prev => {
+        const next = new Set(prev);
+        ids.forEach(id => next.add(id));
+        return next;
+      });
+    }
+    function onRemoved(e: Event) {
+      const ids = (e as CustomEvent).detail as string[];
+      if (!Array.isArray(ids) || ids.length === 0) return;
+      setStickyIds(prev => {
+        const next = new Set(prev);
+        ids.forEach(id => next.delete(id));
+        return next;
+      });
+    }
+    window.addEventListener('fleet:sessions-added', onAdded);
+    window.addEventListener('fleet:sessions-removed', onRemoved);
+    return () => {
+      window.removeEventListener('fleet:sessions-added', onAdded);
+      window.removeEventListener('fleet:sessions-removed', onRemoved);
+    };
+  }, []);
 
   function togglePin(id: string) {
     setPins(prev => {
@@ -145,13 +191,15 @@ export default function SessionsPane({ sessions, selectedId, onSelect, onDismiss
     });
   }
 
-  // Exclude ended sessions — they live in History pane
+  // Sessions pane = work-in-progress + pinned + the open one. Plain idle/ended sessions are NOT
+  // listed here — they live in the History pane and can be resumed/pinned from there.
   const visible  = sessions.filter(s => s.status !== 'ended');
   const pinned   = visible.filter(s => pins.has(s.id));
   const unpinned = visible.filter(s => !pins.has(s.id));
-  // Active OR currently selected session always visible; other idle/error hidden unless pinned
-  const active   = unpinned.filter(s => ACTIVE_STATUSES.has(s.status) || s.id === selectedId);
-  const hidden   = unpinned.filter(s => !ACTIVE_STATUSES.has(s.status) && s.id !== selectedId);
+  // Show running/starting/limited and error (needs attention), whatever is currently open, and any
+  // session made sticky this app-session (added from History, or active at some point).
+  const active   = unpinned.filter(s =>
+    ACTIVE_STATUSES.has(s.status) || s.status === 'error' || s.id === selectedId || stickyIds.has(s.id));
 
   // F2 to rename selected session
   useEffect(() => {
@@ -196,12 +244,6 @@ export default function SessionsPane({ sessions, selectedId, onSelect, onDismiss
     setCtxMenu(null);
     await apiPost(`/api/sessions/${s.id}/dismiss`, {});
     onDismiss?.(s.id);
-  }
-
-  async function dismissAll(list: Session[]) {
-    setCtxMenu(null);
-    await Promise.all(list.map(s => apiPost(`/api/sessions/${s.id}/dismiss`, {})));
-    list.forEach(s => onDismiss?.(s.id));
   }
 
   function handleContextMenu(e: React.MouseEvent, s: Session) {
@@ -317,21 +359,22 @@ export default function SessionsPane({ sessions, selectedId, onSelect, onDismiss
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 1, paddingLeft: 13, fontSize: 10 }}>
           <span style={{ color: hostColor, fontWeight: 600 }}>{s.host}</span>
           {s.distro && <span style={{ color: '#9cdcfe', opacity: 0.8 }}>· {s.distro}</span>}
-          {repo && <span style={{ color: '#7dd3fc', fontWeight: 500 }}>· {repo}</span>}
-          {s.status !== 'idle' && s.status !== 'limited' && (
+          {repo && <span style={{ color: '#bae6fd', fontWeight: 600 }}>· {repo}</span>}
+          {s.status === 'limited' ? (
+            <span style={{ marginLeft: 'auto', fontSize: 9, padding: '1px 4px', borderRadius: 3, flexShrink: 0, background: 'rgba(251,191,36,.15)', color: '#fbbf24' }}>
+              rate limited
+            </span>
+          ) : (
+            // Always show a status badge (including "idle") so every session reads consistently.
             <span style={{
               marginLeft: 'auto', fontSize: 9, padding: '1px 4px', borderRadius: 3, flexShrink: 0,
               background: s.status === 'running' ? 'rgba(74,222,128,.15)'
                        : s.status === 'error'   ? 'rgba(248,113,113,.15)'
+                       : s.status === 'idle'    ? 'rgba(148,163,184,.12)'
                        : 'rgba(251,191,36,.15)',
-              color: dotColor,
+              color: s.status === 'idle' ? 'var(--muted)' : dotColor,
             }}>
               {s.status}
-            </span>
-          )}
-          {s.status === 'limited' && (
-            <span style={{ marginLeft: 'auto', fontSize: 9, padding: '1px 4px', borderRadius: 3, flexShrink: 0, background: 'rgba(251,191,36,.15)', color: '#fbbf24' }}>
-              rate limited
             </span>
           )}
         </div>
@@ -379,34 +422,13 @@ export default function SessionsPane({ sessions, selectedId, onSelect, onDismiss
             )}
 
             {pinned.length === 0 && active.length === 0 && (
-              <div style={{ padding: '12px 10px', fontSize: 11, color: 'var(--muted)', fontStyle: 'italic' }}>
-                Pin sessions to keep them here.
+              <div style={{ padding: '12px 10px', fontSize: 11, color: 'var(--muted)', fontStyle: 'italic', lineHeight: 1.5 }}>
+                No active sessions. Earlier sessions are in <strong>History</strong> below — open one from there, and pin it to keep it here.
               </div>
             )}
           </>
         )}
       </div>
-
-      {/* ── Hidden idle count ───────────────────────────────────── */}
-      {hidden.length > 0 && (
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '4px 8px', fontSize: 10, color: 'var(--muted)',
-          borderTop: '1px solid var(--border)', flexShrink: 0,
-          background: 'rgba(255,255,255,.02)',
-        }}>
-          <span title="Pin sessions to keep them visible here">{hidden.length} idle hidden · pin to show</span>
-          <button
-            onClick={() => dismissAll(hidden)}
-            title="Remove all hidden idle sessions from list"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 10, color: 'var(--muted)', padding: '0 2px' }}
-            onMouseEnter={e => (e.currentTarget.style.color = 'var(--red)')}
-            onMouseLeave={e => (e.currentTarget.style.color = 'var(--muted)')}
-          >
-            Clear all
-          </button>
-        </div>
-      )}
 
       {/* Right-click context menu */}
       {ctxMenu && (

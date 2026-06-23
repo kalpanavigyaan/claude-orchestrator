@@ -136,15 +136,13 @@ export function FleetConsole({ onSwitchToEditor }: { onSwitchToEditor?: () => vo
         });
         setFleetState(d);
         setConnected(true);
-        // Auto-add new sessions to tab bar; only remove tabs for sessions fully gone from orchestrator.
-        // Keep ended sessions in tabs so user can see the result — closed by X or by session disappearing.
+        // Tabs are opened explicitly (selecting/creating/resuming a session), NOT auto-opened for
+        // every session in the orchestrator — otherwise idle sessions flood the bar and closing a
+        // tab is futile (the next poll re-adds it). Here we only DROP tabs whose session is gone.
         setTabOrder(prev => {
           const allIds = new Set((d.sessions ?? []).map(s => s.id));
-          const kept = prev.filter(id => allIds.has(id)); // keep tabs for sessions still in orchestrator
-          const newIds = (d.sessions ?? [])
-            .filter(s => s.status !== 'ended' && !prev.includes(s.id))
-            .map(s => s.id);
-          return newIds.length || kept.length !== prev.length ? [...kept, ...newIds] : prev;
+          const kept = prev.filter(id => allIds.has(id));
+          return kept.length !== prev.length ? kept : prev;
         });
       }, () => {
         setConnected(false);
@@ -175,9 +173,11 @@ export function FleetConsole({ onSwitchToEditor }: { onSwitchToEditor?: () => vo
     };
   }, []);
 
-  // When sidebar session selection changes → show in the focused pane
+  // When the selected session changes (sidebar click, new session, history resume) → open its tab
+  // and show it in the focused pane. This is the single place a tab gets created.
   useEffect(() => {
     if (!selectedId) return;
+    setTabOrder(prev => prev.includes(selectedId) ? prev : [...prev, selectedId]);
     if (focusedPane === 'sec' && splitLayout !== 'single') {
       setSecSession(selectedId);
     } else {

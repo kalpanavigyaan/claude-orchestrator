@@ -254,6 +254,32 @@ function TurnStats({ m }: { m: ChatMessage }) {
 // ── Context status bar ────────────────────────────────────────────────────────
 // Shows at the top of the chat panel: how much of the 200k context window is used,
 // with colour-coded advice on when to /compact or start a new session.
+function codeStats(messages: ChatMessage[]) {
+  let linesAdded = 0, linesRemoved = 0, filesEdited = 0, filesCreated = 0;
+  const touchedPaths = new Set<string>();
+
+  for (const m of messages) {
+    if (m.role !== 'tool') continue;
+    const inp = m.input as Record<string, unknown> | undefined;
+    if (!inp) continue;
+    const cmd  = inp.command as string | undefined;
+    const path = inp.path as string | undefined;
+
+    if (cmd === 'str_replace') {
+      const added   = String(inp.new_string ?? '').split('\n').length;
+      const removed = String(inp.old_string ?? '').split('\n').length;
+      linesAdded   += added;
+      linesRemoved += removed;
+      if (path && !touchedPaths.has(path)) { touchedPaths.add(path); filesEdited++; }
+    } else if (cmd === 'create') {
+      const lines = String(inp.file_text ?? '').split('\n').length;
+      linesAdded += lines;
+      if (path && !touchedPaths.has(path)) { touchedPaths.add(path); filesCreated++; }
+    }
+  }
+  return { linesAdded, linesRemoved, filesEdited, filesCreated, filesTotal: touchedPaths.size };
+}
+
 function ContextBar({ messages, session }: { messages: ChatMessage[]; session: Session | null }) {
   const lastResult = [...messages].reverse().find(m => m.role === 'result' && m.turnUsage);
   if (!lastResult?.turnUsage) return null;
@@ -263,6 +289,7 @@ function ContextBar({ messages, session }: { messages: ChatMessage[]; session: S
   const pct = Math.round((ctxTokens / CONTEXT_WINDOW) * 100);
   const turns = messages.filter(m => m.role === 'assistant').length;
   const cost  = messages.reduce((sum, m) => sum + (m.turnCost ?? 0), 0);
+  const code  = codeStats(messages);
 
   const barColor  = pct >= 80 ? '#f87171' : pct >= 55 ? '#fbbf24' : '#4ade80';
   const advice    = pct >= 90 ? '⚠ Context nearly full — start a new session'
@@ -275,9 +302,8 @@ function ContextBar({ messages, session }: { messages: ChatMessage[]; session: S
       flexShrink: 0, borderBottom: '1px solid var(--border)',
       background: 'rgba(255,255,255,.02)', padding: '4px 10px',
     }}>
-      {/* Bar + stats row */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: advice ? 3 : 0 }}>
-        {/* Progress bar */}
+      {/* Row 1: context bar + token stats */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
         <div style={{ flex: 1, height: 4, background: 'rgba(255,255,255,.08)', borderRadius: 2, overflow: 'hidden' }}>
           <div style={{ width: `${Math.min(pct, 100)}%`, height: '100%', background: barColor, borderRadius: 2, transition: 'width .3s' }} />
         </div>
@@ -296,6 +322,29 @@ function ContextBar({ messages, session }: { messages: ChatMessage[]; session: S
           </span>
         )}
       </div>
+
+      {/* Row 2: code stats */}
+      {(code.linesAdded > 0 || code.filesTotal > 0) && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: advice ? 3 : 0 }}>
+          {code.linesAdded > 0 && (
+            <span title="Lines of code written (str_replace new_string + file creates)" style={{ fontSize: 10, color: '#4ade80', fontFamily: 'monospace' }}>
+              +{code.linesAdded.toLocaleString()} lines
+            </span>
+          )}
+          {code.linesRemoved > 0 && (
+            <span title="Lines of code removed (str_replace old_string)" style={{ fontSize: 10, color: '#f87171', fontFamily: 'monospace' }}>
+              −{code.linesRemoved.toLocaleString()}
+            </span>
+          )}
+          {code.filesTotal > 0 && (
+            <span title={`${code.filesCreated} file${code.filesCreated !== 1 ? 's' : ''} created, ${code.filesEdited} edited`} style={{ fontSize: 10, color: '#7dd3fc', fontFamily: 'monospace' }}>
+              {code.filesTotal} file{code.filesTotal !== 1 ? 's' : ''}
+              {code.filesCreated > 0 && <span style={{ opacity: 0.7 }}> ({code.filesCreated} new)</span>}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Advice */}
       {advice && (
         <div style={{ fontSize: 10, color: barColor, fontWeight: 500 }}>{advice}</div>
@@ -313,11 +362,31 @@ export default function ChatView({ sessionId, session, isViewingHistory, history
   const [searchText, setSearchText]   = useState('');
   const [roleFilter, setRoleFilter]   = useState<'all' | 'user' | 'assistant' | 'result' | 'tool'>('all');
   const [showSearch, setShowSearch]   = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const esRef          = useRef<EventSource | null>(null);
+  const messagesEndRef      = useRef<HTMLDivElement>(null);
+  const messagesScrollRef   = useRef<HTMLDivElement>(null);
+  const esRef               = useRef<EventSource | null>(null);
+  // When true, the next render with content jumps straight to the latest message (no animation).
+  // Set whenever a different session/transcript is opened.
+  const pinToBottomRef      = useRef(true);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
 
   const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
+    messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+    setShowScrollBtn(false);
+  }, []);
+
+  // Opening a different session (or history transcript) should show its latest messages, not the top.
+  useEffect(() => { pinToBottomRef.current = true; }, [sessionId, isViewingHistory]);
+
+  useEffect(() => {
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      setShowScrollBtn(distFromBottom > 120);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
   }, []);
 
   useEffect(() => {
@@ -337,7 +406,7 @@ export default function ChatView({ sessionId, session, isViewingHistory, history
     setWorkingState(null);
 
     const es = openSSE(`/api/sessions/${sessionId}/events`, (raw) => {
-      const ev = raw as { kind: string; messages?: ChatMessage[]; message?: ChatMessage; text?: string; running?: boolean };
+      const ev = raw as { kind: string; messages?: ChatMessage[]; message?: ChatMessage; text?: string; running?: boolean; activity?: { phase?: string; preview?: string } | null };
       if (ev.kind === 'backlog') {
         const msgs = ev.messages ?? [];
         setMessages(msgs);
@@ -358,7 +427,14 @@ export default function ChatView({ sessionId, session, isViewingHistory, history
           setMessages(prev => [...prev, m]);
         }
       } else if (ev.kind === 'activity') {
-        setWorkingState({ text: ev.text ?? '', running: ev.running !== false });
+        // Backend sends { activity: { phase, preview } } while a turn is in flight, or
+        // { activity: null } when the turn ends (idle/ended). A null activity means "not working".
+        const a = ev.activity;
+        if (a && a.phase) {
+          setWorkingState({ text: a.preview ? `${a.phase} · ${a.preview}` : a.phase, running: true });
+        } else {
+          setWorkingState(null);
+        }
       } else if (ev.kind === 'approval') {
         window.dispatchEvent(new CustomEvent('fleet:approval', { detail: ev }));
       }
@@ -368,7 +444,18 @@ export default function ChatView({ sessionId, session, isViewingHistory, history
     return () => { es.close(); };
   }, [sessionId, isViewingHistory]);
 
-  useEffect(() => { scrollToBottom(); }, [messages, historyMessages, scrollToBottom]);
+  useEffect(() => {
+    const count = isViewingHistory ? historyMessages.length : messages.length;
+    // Just opened this session/transcript — once its messages are in, snap to the latest instantly.
+    if (pinToBottomRef.current) {
+      if (count > 0) { pinToBottomRef.current = false; scrollToBottom(); }
+      return;
+    }
+    const el = messagesScrollRef.current;
+    if (!el) { scrollToBottom(); return; }
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distFromBottom < 120) scrollToBottom();
+  }, [messages, historyMessages, isViewingHistory, scrollToBottom]);
 
   async function sendMessage() {
     if (!sessionId || !composerText.trim()) return;
@@ -379,7 +466,15 @@ export default function ChatView({ sessionId, session, isViewingHistory, history
   }
 
   const displayMessages = isViewingHistory ? historyMessages : messages;
-  const isRunning = session?.status === 'running' || (toolFeed.length > 0 && workingState?.running);
+  // Authoritative: a session is only "working" while the backend reports running/starting.
+  // idle/ended/error/limited all mean the turn is over — never show the working animation then,
+  // even if toolFeed still holds entries from the just-finished turn.
+  const idleStatus = !session?.status
+    || session.status === 'idle' || session.status === 'ended'
+    || session.status === 'error' || session.status === 'limited';
+  const isRunning = !idleStatus && (
+    session?.status === 'running' || session?.status === 'starting' || workingState?.running === true
+  );
 
   // Filter by role + search text
   const filteredMessages = displayMessages.filter(m => {
@@ -541,10 +636,26 @@ export default function ChatView({ sessionId, session, isViewingHistory, history
       )}
 
       {/* Messages — hidden while loading history */}
-      <div style={{
-        flex: 1, overflowY: 'auto', padding: '6px 10px',
+      <div style={{ flex: 1, position: 'relative', minHeight: 0, display: (isViewingHistory && historyLoading && historyMessages.length === 0) ? 'none' : 'block' }}>
+        {displayMessages.length > 0 && (
+          <button
+            onClick={scrollToBottom}
+            title="Jump to latest message"
+            style={{
+              position: 'absolute', bottom: 12, right: 16, zIndex: 10,
+              width: 30, height: 30, borderRadius: '50%',
+              background: 'var(--accent)', color: '#fff',
+              border: 'none', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 16, lineHeight: 1, boxShadow: '0 2px 8px rgba(0,0,0,.4)',
+              opacity: showScrollBtn ? 0.95 : 0.45,
+              transition: 'opacity .15s',
+            }}
+          >↓</button>
+        )}
+      <div ref={messagesScrollRef} style={{
+        position: 'absolute', inset: 0, overflowY: 'auto', padding: '6px 10px',
         userSelect: 'text',
-        display: (isViewingHistory && historyLoading && historyMessages.length === 0) ? 'none' : undefined,
       }}>
         {filteredMessages.length === 0 && displayMessages.length > 0 && (
           <div style={{ padding: '20px', textAlign: 'center', color: 'var(--muted)', fontSize: 12 }}>
@@ -611,9 +722,10 @@ export default function ChatView({ sessionId, session, isViewingHistory, history
         })}
         <div ref={messagesEndRef} />
       </div>
+      </div>
 
-      {/* Working indicator */}
-      {!isViewingHistory && (isRunning || toolFeed.length > 0) && (
+      {/* Working indicator — only while the session is actually running, not after it goes idle. */}
+      {!isViewingHistory && isRunning && (
         <div style={{
           padding: '6px 12px',
           borderTop: '1px solid var(--border)',

@@ -56,8 +56,48 @@ export default function HistoryPane({ onSelectHistory, onResume, onRename, onCop
   const [renamingRel, setRenamingRel] = useState<string | null>(null);
   const [renameVal, setRenameVal]     = useState('');
   const [ctxMenu, setCtxMenu]         = useState<CtxMenu | null>(null);
+  const [checked, setChecked]         = useState<Set<string>>(new Set());
+  const [busyRels, setBusyRels]       = useState<Set<string>>(new Set());
   const renameRef = useRef<HTMLInputElement>(null);
   const retryRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Remember which live session id each checked history rel resumed into, so unchecking can remove it.
+  const relToIdRef = useRef<Map<string, string>>(new Map());
+
+  function markBusy(rel: string, on: boolean) {
+    setBusyRels(prev => {
+      const next = new Set(prev);
+      if (on) next.add(rel); else next.delete(rel);
+      return next;
+    });
+  }
+
+  // Checkbox = "is this session in the Sessions pane". Check → resume it in; uncheck → remove it.
+  async function toggleCheck(rel: string) {
+    if (busyRels.has(rel)) return;
+    const isChecked = checked.has(rel);
+    markBusy(rel, true);
+    try {
+      if (!isChecked) {
+        const res = await apiPost('/api/history/resume', { rel });
+        const id = res?.id as string | undefined;
+        if (id) {
+          relToIdRef.current.set(rel, id);
+          setChecked(prev => new Set(prev).add(rel));
+          window.dispatchEvent(new CustomEvent('fleet:sessions-added', { detail: [id] }));
+        }
+      } else {
+        const id = relToIdRef.current.get(rel);
+        setChecked(prev => { const next = new Set(prev); next.delete(rel); return next; });
+        if (id) {
+          relToIdRef.current.delete(rel);
+          await apiPost(`/api/sessions/${id}/dismiss`, {});
+          window.dispatchEvent(new CustomEvent('fleet:sessions-removed', { detail: [id] }));
+        }
+      }
+    } finally {
+      markBusy(rel, false);
+    }
+  }
 
   const loadHistory = useCallback(async () => {
     setLoading(true);
@@ -251,6 +291,15 @@ export default function HistoryPane({ onSelectHistory, onResume, onRename, onCop
                     onMouseLeave={e => { if (!isSel) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <input
+                        type="checkbox"
+                        checked={checked.has(s.rel)}
+                        disabled={busyRels.has(s.rel)}
+                        onClick={e => e.stopPropagation()}
+                        onChange={() => toggleCheck(s.rel)}
+                        title="Check to add this session to the Sessions pane; uncheck to remove it"
+                        style={{ flexShrink: 0, width: 13, height: 13, cursor: busyRels.has(s.rel) ? 'default' : 'pointer', accentColor: 'var(--accent)', margin: 0, opacity: busyRels.has(s.rel) ? 0.5 : 1 }}
+                      />
                       <span style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: dotColor, flexShrink: 0 }} />
 
                       {isRenaming ? (
