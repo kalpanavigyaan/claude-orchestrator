@@ -40,7 +40,8 @@ param(
     [string]$BindHost = "127.0.0.1",
     [int]$Port = 4318,
     [switch]$Install,
-    [switch]$NoRestage
+    [switch]$NoRestage,
+    [switch]$NoBuildUi
 )
 
 $ErrorActionPreference = "Stop"
@@ -132,10 +133,36 @@ $displayHost = if ($BindHost -eq "0.0.0.0") { "<host-ip>" } else { $BindHost }
 $tokenSuffix = if ($Token) { "/?token=$Token" } else { "" }
 
 # ── Web-IDE (React UI) ────────────────────────────────────────────────────────
-# If web-ide/dist/ exists, start vite preview on $WebIdePort in the background.
+# Serve the built React UI via vite preview on $WebIdePort. Before serving, rebuild
+# dist/ automatically if it's missing or any src/ file is newer than the last build —
+# so you never have to run npm/build-ui by hand; just run this script. (-NoBuildUi skips.)
 $WebIdePort = 5174
-$WebIdeDist = Join-Path $RepositoryRoot "web-ide\dist\index.html"
+$WebIdeRoot = Join-Path $RepositoryRoot "web-ide"
+$WebIdeDist = Join-Path $WebIdeRoot "dist\index.html"
 $WebIdeJob  = $null
+
+if (-not $NoBuildUi -and (Test-Path $WebIdeRoot)) {
+    $distJs = Get-ChildItem (Join-Path $WebIdeRoot "dist\assets") -Filter *.js -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    $newestSrc = Get-ChildItem (Join-Path $WebIdeRoot "src") -Recurse -File -ErrorAction SilentlyContinue |
+                 Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    $needBuild = (-not (Test-Path $WebIdeDist)) -or (-not $distJs) -or
+                 ($newestSrc -and $newestSrc.LastWriteTime -gt $distJs.LastWriteTime)
+    if ($needBuild) {
+        Write-Host "  web-ide: source changed — rebuilding React UI..." -ForegroundColor Yellow
+        Push-Location $WebIdeRoot
+        try {
+            if (-not (Test-Path (Join-Path $WebIdeRoot "node_modules"))) {
+                npm install --legacy-peer-deps --no-fund --no-audit
+            }
+            npm run build
+            if ($LASTEXITCODE -ne 0) { Write-Warning "web-ide build failed (exit $LASTEXITCODE) — serving previous dist/." }
+        } finally { Pop-Location }
+    } else {
+        Write-Host "  web-ide: dist/ up to date — skipping build." -ForegroundColor DarkGray
+    }
+}
+
 if (Test-Path $WebIdeDist) {
     # Kill anything already on $WebIdePort
     $prev = Get-NetTCPConnection -LocalPort $WebIdePort -State Listen -ErrorAction SilentlyContinue
