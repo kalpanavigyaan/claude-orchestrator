@@ -407,6 +407,58 @@ details[open] > .tree-summary::before { transform: rotate(90deg); }
 .approval-body pre { background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px; overflow: auto; max-height: 240px; }
 .hidden { display: none; }
 
+/* ── Directory access toggle ──────────────────────────────────────────────── */
+.rb-dir-access { font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 4px; border: 1px solid; cursor: pointer; min-height: auto; text-transform: uppercase; letter-spacing: .03em; }
+.rb-dir-access.read { background: rgba(251,191,36,.1); border-color: var(--amber); color: var(--amber); }
+.rb-dir-access.write { background: rgba(74,222,128,.1); border-color: var(--green); color: var(--green); }
+.rb-dir-access-sel { width: auto; flex: 0 0 auto; padding: 4px 8px; font-size: 12px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }
+.rb-dir-add { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+.rb-dir-add .rb-dir-input { flex: 1; min-width: 120px; }
+.dir-badge { display: inline-block; font-size: 9px; font-weight: 700; padding: 0 4px; border-radius: 3px; }
+.dir-badge.read { background: rgba(251,191,36,.15); color: var(--amber); border: 1px solid rgba(251,191,36,.4); }
+.dir-badge.write { background: rgba(74,222,128,.15); color: var(--green); border: 1px solid rgba(74,222,128,.4); }
+
+/* ── Compact log ──────────────────────────────────────────────────────────── */
+.compact-log { font-size: 11px; color: var(--muted); max-height: 100px; overflow-y: auto; }
+.compact-log-item { padding: 2px 0; border-bottom: 1px solid var(--border); }
+.compact-log-item:last-child { border-bottom: none; }
+
+/* ── Session health badges ────────────────────────────────────────────────── */
+.health-blocked { font-size: 10px; background: rgba(248,113,113,.15); color: var(--red); border: 1px solid rgba(248,113,113,.3); border-radius: 4px; padding: 1px 5px; }
+.health-tools { font-size: 10px; background: rgba(110,168,254,.12); color: var(--accent); border: 1px solid rgba(110,168,254,.3); border-radius: 4px; padding: 1px 5px; }
+.health-queue { font-size: 10px; background: rgba(251,191,36,.1); color: var(--amber); border: 1px solid rgba(251,191,36,.3); border-radius: 4px; padding: 1px 5px; }
+
+/* ── Queue panel ──────────────────────────────────────────────────────────── */
+.queue-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
+.queue-item { display: flex; align-items: flex-start; gap: 6px; padding: 6px 8px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; font-size: 12px; }
+.queue-item-num { flex: 0 0 18px; color: var(--muted); font-size: 11px; font-weight: 700; padding-top: 1px; }
+.queue-item-text { flex: 1; min-width: 0; word-break: break-word; }
+.queue-item-meta { font-size: 10px; color: var(--muted); margin-top: 2px; }
+.queue-item-meta code { font-size: 10px; }
+.queue-item-actions { display: flex; gap: 3px; flex-shrink: 0; }
+.queue-item-actions button { background: transparent; border: 1px solid var(--border); color: var(--muted); border-radius: 4px; padding: 1px 5px; font-size: 11px; cursor: pointer; min-height: auto; }
+.queue-item-actions button:hover { border-color: var(--accent); color: var(--accent); }
+.queue-del:hover { border-color: var(--red) !important; color: var(--red) !important; }
+.queue-add-text { width: 100%; margin-top: 4px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px; font-size: 13px; font-family: inherit; resize: vertical; }
+.queue-add-opts { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.queue-retry-label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text); cursor: pointer; }
+.queue-retry-n { width: 50px; padding: 3px 6px; font-size: 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); margin: 0 2px; }
+.queue-retry-n:disabled { opacity: .4; }
+.queue-pattern { width: 100%; margin-top: 3px; padding: 5px 8px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 12px; font-family: monospace; }
+.queue-add-actions { display: flex; gap: 6px; margin-top: 8px; }
+.queue-done { max-height: 100px; overflow-y: auto; font-size: 11px; }
+.queue-done-item { padding: 2px 0; border-bottom: 1px solid var(--border); color: var(--muted); word-break: break-word; }
+.queue-done-item:last-child { border-bottom: none; }
+.queue-done-time { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+/* ── Schedule modal ───────────────────────────────────────────────────────── */
+.sched-pending { margin-top: 12px; }
+.sched-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; font-size: 12px; }
+.sched-item-info { flex: 1; min-width: 0; }
+.sched-item-when { color: var(--muted); font-size: 11px; display: block; margin-top: 2px; }
+.sched-cancel-btn { background: transparent; border: 1px solid var(--border); color: var(--red); border-radius: 6px; padding: 3px 8px; font-size: 11px; cursor: pointer; min-height: auto; }
+.sched-cancel-btn:hover { border-color: var(--red); background: rgba(248,113,113,.1); }
+
 @media (max-width: 720px) {
   main { flex-direction: column; }
   .sidebar { width: auto; flex: 0 0 auto; max-height: 40vh; border-right: none; border-bottom: 1px solid var(--border); }

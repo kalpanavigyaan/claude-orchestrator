@@ -67,14 +67,17 @@
         <button id="btn-history">🕘 History</button>
         <button id="btn-continue-all">⏩ Continue all</button>
         <button id="btn-set-reset">⏰ Set reset…</button>
+        <button id="btn-schedule">📅 Schedule…</button>
       </div>
       <div class="rb-tabs">
         <button class="rb-tab active" data-tab="controls">Controls</button>
         <button class="rb-tab" data-tab="intelligence">Intelligence</button>
+        <button class="rb-tab" data-tab="queue">Queue</button>
         <button class="rb-tab" data-tab="commands">Commands</button>
       </div>
       <div id="rb-controls" class="rb-pane"></div>
       <div id="rb-intelligence" class="rb-pane hidden"></div>
+      <div id="rb-queue" class="rb-pane hidden"></div>
       <div id="rb-commands" class="rb-pane hidden">
         <input id="cmd-filter" class="cmd-filter" placeholder="Filter commands…" />
         <div id="cmd-list" class="cmd-list"></div>
@@ -161,6 +164,57 @@
         <button id="instr-close">Close</button>
         <button id="instr-save">Save file</button>
         <button id="instr-read" class="primary">Have Claude read</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Send-to-session modal -->
+  <div id="send-to-modal" class="overlay hidden">
+    <div class="modal">
+      <h2>Send message to another session</h2>
+      <label>Target session
+        <select id="send-to-target"></select>
+      </label>
+      <label>Message
+        <textarea id="send-to-text" rows="4" placeholder="Message to deliver to the target session…"></textarea>
+      </label>
+      <div class="modal-actions">
+        <button id="send-to-cancel">Cancel</button>
+        <button id="send-to-send" class="primary">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Schedule session modal -->
+  <div id="schedule-modal" class="overlay hidden">
+    <div class="modal">
+      <h2>Schedule a session</h2>
+      <label>Fire at (e.g. +2h, +30m, or 2026-07-01 03:00)
+        <input id="sched-fireat" placeholder="+2h" />
+      </label>
+      <label>Working directory
+        <input id="sched-cwd" placeholder="E:/GitHub/myapp" />
+      </label>
+      <label>Label
+        <input id="sched-label" placeholder="(optional)" />
+      </label>
+      <label>Mode
+        <select id="sched-mode">
+          <option value="bypassPermissions">Auto (full access)</option>
+          <option value="acceptEdits">Auto-accept edits</option>
+          <option value="default">Ask before edits</option>
+        </select>
+      </label>
+      <label>Initial prompt
+        <textarea id="sched-prompt" rows="3" placeholder="What should Claude do?"></textarea>
+      </label>
+      <div class="sched-pending">
+        <div class="rb-label">Pending scheduled sessions</div>
+        <div id="sched-list"></div>
+      </div>
+      <div class="modal-actions">
+        <button id="sched-cancel">Close</button>
+        <button id="sched-create" class="primary">Schedule</button>
       </div>
     </div>
   </div>

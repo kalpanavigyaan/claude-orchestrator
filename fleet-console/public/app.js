@@ -11,7 +11,7 @@
 
 // Must match orchestrator BUILD. If the server reports a different build, this page is running a
 // stale cached app.js — we show a banner so it's never a silent mystery. Bump both on UI changes.
-const APP_BUILD = "2026-06-17a";
+const APP_BUILD = "2026-06-21b";
 
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
 const tokenQuery = TOKEN ? `?token=${encodeURIComponent(TOKEN)}` : "";
@@ -515,13 +515,19 @@ function renderFleet() {
     }
     node.classList.toggle("active", s.id === selectedId);
     const timer = s.status === "limited" && s.nextContinueAt ? `<span class="timer">⌛ ${fmtCountdown(s.nextContinueAt)}</span>` : "";
+    const blockedMs = s.blockedSince ? (serverNow() - s.blockedSince) : 0;
+    const blockedTag = blockedMs > 2000 ? `<span class="health-blocked" title="Waiting for approval">⏸ ${Math.round(blockedMs / 1000)}s</span>` : "";
+    const toolTag = (s.status === "running" && s.toolCallsThisTurn > 0)
+      ? `<span class="health-tools" title="${s.lastToolName || "tool"}">${s.toolCallsThisTurn} calls</span>` : "";
+    const queueTag = s.messageQueue && s.messageQueue.length
+      ? `<span class="health-queue" title="${s.messageQueue.length} queued task(s)">📋 ${s.messageQueue.length}</span>` : "";
     node.innerHTML = `
       <div class="row1">
         <span class="name">${escapeHtml(s.label)}</span>
         <span class="badge ${s.status}">${s.status}</span>
       </div>
       <div class="sub">${escapeHtml(s.host)}${s.distro ? " · " + escapeHtml(s.distro) : ""} · ${escapeHtml(s.cwd || "")}</div>
-      <div class="sub">${s.policy}${s.pendingApprovals && s.pendingApprovals.length ? " · ⚠ approval needed" : ""} ${timer}</div>`;
+      <div class="sub">${s.policy}${s.pendingApprovals && s.pendingApprovals.length ? " · ⚠ approval needed" : ""} ${blockedTag}${toolTag}${queueTag} ${timer}</div>`;
   }
   for (const node of [...sessionsEl.children]) {
     if (!seen.has(node.dataset.id)) node.remove();
@@ -540,6 +546,8 @@ function renderFleet() {
   updateComposer();
   renderControls(sel);
   if (cmdbarEl && !cmdbarEl.classList.contains("hidden") && !el("rb-commands").classList.contains("hidden")) renderCommands();
+  if (el("rb-queue") && !el("rb-queue").classList.contains("hidden")) renderQueue();
+  if (el("schedule-modal") && !el("schedule-modal").classList.contains("hidden")) renderScheduleList();
 }
 
 /** Show a status line under the chat so the user always knows what the agent is doing. */
@@ -551,7 +559,15 @@ function updateWorking() {
   let err = false;
   let showCmd = false;
   switch (s.status) {
-    case "running": text = "Claude is working…"; showCmd = true; break;
+    case "running":
+      if (s.blockedSince) {
+        const blockedSec = Math.round((serverNow() - s.blockedSince) / 1000);
+        text = `Waiting for approval… (${blockedSec}s)`;
+      } else {
+        text = "Claude is working…";
+        showCmd = true;
+      }
+      break;
     case "starting": text = "Starting the session…"; break;
     case "limited": text = "Usage limit reached — will auto-continue after the reset."; break;
     case "error": text = "Runner stopped. Press Restart to try again."; err = true; break;
@@ -722,7 +738,13 @@ function renderControls(s) {
   const models = (latest && latest.models) || [];
   // Stable signature so the inputs don't reset on every poll; covers all three states.
   const sig = s
-    ? "live|" + [s.id, s.status, s.mode, s.model, models.length, s.effort || "", s.thinking || "", s.browser ? 1 : 0, s.autoContinue === false ? 0 : 1, (s.additionalDirectories || []).join(",")].join("|")
+    ? "live|" + [s.id, s.status, s.mode, s.model, models.length, s.effort || "", s.thinking || "",
+        s.browser ? 1 : 0, s.autoContinue === false ? 0 : 1,
+        (s.additionalDirectories || []).join(","),
+        JSON.stringify(s.directoryAccess || {}),
+        (s.compactLog || []).length,
+        s.blockedSince || 0,
+      ].join("|")
     : viewingRel
       ? "past|" + viewingRel
       : "none";
@@ -759,12 +781,21 @@ function renderControls(s) {
   for (const m of models) {
     modelOpts += `<option value="${escapeHtml(m.value)}" ${m.value === s.model ? "selected" : ""}>${escapeHtml(m.displayName || m.value)}</option>`;
   }
-  const extraDirsHtml = (s.additionalDirectories || []).map((d, i) =>
-    `<div class="rb-dir-item">
+  const dirAccess = s.directoryAccess || {};
+  const extraDirsHtml = (s.additionalDirectories || []).map((d, i) => {
+    const access = dirAccess[d] || "read";
+    const isWrite = access === "write";
+    return `<div class="rb-dir-item">
        <span class="rb-dir-path" title="${escapeHtml(d)}">${escapeHtml(d)}</span>
+       <button class="rb-dir-access ${isWrite ? "write" : "read"}" data-idx="${i}" data-path="${escapeHtml(d)}" data-access="${access}" title="Click to toggle read/write">${isWrite ? "rw" : "ro"}</button>
        <button class="rb-dir-remove" data-idx="${i}" title="Remove">✕</button>
-     </div>`
-  ).join("");
+     </div>`;
+  }).join("");
+  const compactLogHtml = (s.compactLog && s.compactLog.length)
+    ? s.compactLog.slice().reverse().slice(0, 5).map(c =>
+        `<div class="compact-log-item">${new Date(c.ts).toLocaleTimeString()} · ${c.trigger} · ${c.assistantTurns} turns · ~${c.ctxPct}% ctx</div>`
+      ).join("")
+    : '<div class="rb-note">No compactions yet.</div>';
   rbControlsEl.innerHTML =
     `<div class="rb-section">
        <label class="rb-label">🛡 Mode</label>
@@ -783,7 +814,7 @@ function renderControls(s) {
        <label class="rb-check"><input type="checkbox" id="ctl-autocontinue" ${s.autoContinue === false ? "" : "checked"}/> Auto-continue after the 5-hour reset</label>
        <div class="rb-note">When on, this session runs a turn unattended after each usage reset — that spends tokens on its own. Turn off to make it wait for you.</div>
        <label class="rb-label">📁 Directories</label>
-       <div class="rb-note">The working directory is fixed. Add extra repos Claude can read and edit.</div>
+       <div class="rb-note">The working directory is fixed. Add extra repos; toggle <span class="dir-badge read">ro</span>/<span class="dir-badge write">rw</span> to control write access.</div>
        <div class="rb-dir-list">
          <div class="rb-dir-item rb-dir-cwd">
            <span class="rb-dir-path" title="${escapeHtml(s.cwd)}">${escapeHtml(s.cwd)}</span>
@@ -793,11 +824,20 @@ function renderControls(s) {
        </div>
        <div class="rb-dir-add">
          <input id="ctl-dir-input" class="rb-dir-input" placeholder="/path/to/repo  or  E:/GitHub/repo" />
+         <select id="ctl-dir-access-sel" class="rb-dir-access-sel" title="Access level for new directory">
+           <option value="read">read-only</option>
+           <option value="write">read-write</option>
+         </select>
          <button id="ctl-dir-add">Add</button>
        </div>
      </div>
+     <div class="rb-section">
+       <label class="rb-label">🗜 Compact history</label>
+       <div class="compact-log">${compactLogHtml}</div>
+     </div>
      <div class="rb-actions">
        <button id="ctl-instr">📄 Instructions</button>
+       <button id="ctl-send-to">📨 Send to session…</button>
        <button id="ctl-stop" class="rb-stop">⏹ Stop current task</button>
        <button id="ctl-continue">▶ Continue</button>
        <button id="ctl-restart">🔄 Restart runner</button>
@@ -846,6 +886,20 @@ function renderControls(s) {
     await api(`/api/sessions/${s.id}/stop`);
     pollFleet();
   });
+  // Toggle access (read ↔ write) for a directory
+  for (const btn of rbControlsEl.querySelectorAll(".rb-dir-access")) {
+    btn.addEventListener("click", async () => {
+      const dirPath = btn.dataset.path;
+      const currentAccess = btn.dataset.access;
+      const newAccess = currentAccess === "write" ? "read" : "write";
+      const dirs = (s.additionalDirectories || []).map(d =>
+        d === dirPath ? { path: d, access: newAccess } : { path: d, access: (s.directoryAccess || {})[d] || "read" }
+      );
+      await api(`/api/sessions/${s.id}/set-directories`, { directories: dirs, inject: true });
+      lastControlsSig = null;
+      pollFleet();
+    });
+  }
   // Remove a directory by index
   for (const btn of rbControlsEl.querySelectorAll(".rb-dir-remove")) {
     btn.addEventListener("click", async () => {
@@ -863,14 +917,19 @@ function renderControls(s) {
   async function addDirectory() {
     const newDir = dirInput.value.trim();
     if (!newDir) return;
-    const dirs = [...(s.additionalDirectories || []), newDir];
-    await api(`/api/sessions/${s.id}/set-directories`, { directories: dirs });
+    const accessSel = el("ctl-dir-access-sel");
+    const access = accessSel ? accessSel.value : "read";
+    const existing = (s.additionalDirectories || []).map(d => ({ path: d, access: (s.directoryAccess || {})[d] || "read" }));
+    const dirs = [...existing, { path: newDir, access }];
+    await api(`/api/sessions/${s.id}/set-directories`, { directories: dirs, inject: true });
     dirInput.value = "";
     lastControlsSig = null;
     pollFleet();
   }
   dirAddBtn.addEventListener("click", addDirectory);
   dirInput.addEventListener("keydown", (e) => { if (e.key === "Enter") addDirectory(); });
+  // Send to another session
+  el("ctl-send-to").addEventListener("click", () => openSendToModal(s.id));
 }
 
 // ---- instructions modal ----------------------------------------------------
@@ -1820,6 +1879,226 @@ function renderIntelligence() {
   }
 }
 
+// ---- Queue tab -------------------------------------------------------------
+
+const rbQueueEl = el("rb-queue");
+let lastQueueSig = null;
+
+function renderQueue() {
+  if (!rbQueueEl) return;
+  const s = latest && selectedId ? latest.sessions.find((x) => x.id === selectedId) : null;
+  const queue = s ? (s.messageQueue || []) : [];
+  const completed = s ? (s.completedInstructions || []) : [];
+  const sig = s ? s.id + "|" + queue.length + "|" + completed.length + "|" + (s.queueMode || "") : "none";
+  if (sig === lastQueueSig) return;
+  lastQueueSig = sig;
+  if (!s) {
+    rbQueueEl.innerHTML = '<div class="rb-hint">Select a session to manage its task queue.</div>';
+    return;
+  }
+  const qMode = s.queueMode || "same";
+  const queueHtml = queue.length
+    ? queue.map((item, i) => {
+        const text = typeof item === "string" ? item : item.text;
+        const maxRetries = typeof item === "object" && item.maxRetries ? item.maxRetries : 0;
+        const retryCount = typeof item === "object" && item.retryCount ? item.retryCount : 0;
+        const pattern = typeof item === "object" && item.successPattern ? item.successPattern : null;
+        const meta = maxRetries ? ` · retry ${retryCount}/${maxRetries}` : "";
+        return `<div class="queue-item">
+          <div class="queue-item-num">${i + 1}</div>
+          <div class="queue-item-text" title="${escapeHtml(text)}">${escapeHtml(text.slice(0, 120))}${text.length > 120 ? "…" : ""}</div>
+          ${pattern ? `<div class="queue-item-meta">match: <code>${escapeHtml(pattern)}</code>${meta}</div>` : (maxRetries ? `<div class="queue-item-meta">${meta.trim()}</div>` : "")}
+          <div class="queue-item-actions">
+            ${i > 0 ? `<button class="queue-up" data-from="${i}" data-to="${i - 1}" title="Move up">↑</button>` : ""}
+            ${i < queue.length - 1 ? `<button class="queue-dn" data-from="${i}" data-to="${i + 1}" title="Move down">↓</button>` : ""}
+            <button class="queue-del" data-idx="${i}" title="Remove">✕</button>
+          </div>
+        </div>`;
+      }).join("")
+    : '<div class="rb-note">Queue is empty — add tasks below.</div>';
+  const completedHtml = completed.length
+    ? completed.slice().reverse().slice(0, 5).map(c => {
+        const text = typeof c === "string" ? c : (c.text || "");
+        const when = c.deliveredAt ? new Date(c.deliveredAt).toLocaleTimeString() : "";
+        return `<div class="queue-done-item">${when ? `<span class="queue-done-time">${escapeHtml(when)}</span> ` : ""}${escapeHtml(text.slice(0, 80))}${text.length > 80 ? "…" : ""}</div>`;
+      }).join("")
+    : '<div class="rb-note">No completed tasks yet.</div>';
+  rbQueueEl.innerHTML =
+    `<div class="rb-section">
+       <label class="rb-label">Delivery mode</label>
+       <select id="ctl-queue-mode" class="hdr-select">
+         <option value="same" ${qMode === "same" ? "selected" : ""}>Continue in same session</option>
+         <option value="fresh" ${qMode === "fresh" ? "selected" : ""}>Start fresh session per task</option>
+       </select>
+       <div class="rb-note">Tasks run one at a time, each after the previous finishes.</div>
+     </div>
+     <div class="rb-section">
+       <label class="rb-label">Pending tasks (${queue.length})</label>
+       <div class="queue-list" id="queue-list">${queueHtml}</div>
+     </div>
+     <div class="rb-section">
+       <label class="rb-label">Add task</label>
+       <textarea id="queue-add-text" class="queue-add-text" rows="3" placeholder="What should Claude do next?"></textarea>
+       <div class="queue-add-opts">
+         <label class="rb-check queue-retry-label">
+           <input type="checkbox" id="queue-retry-cb" /> Retry on failure
+           <input type="number" id="queue-retry-n" class="queue-retry-n" min="1" max="10" value="3" title="Max retries" disabled />x
+         </label>
+         <input id="queue-pattern" class="queue-pattern" placeholder="Success pattern (regex, optional)" title="Output must match this regex; otherwise retries" />
+       </div>
+       <div class="queue-add-actions">
+         <button id="queue-add-btn" class="primary">Add to queue</button>
+         <button id="queue-clear-btn" class="rb-end">Clear all</button>
+       </div>
+     </div>
+     <div class="rb-section">
+       <label class="rb-label">Completed (last 5)</label>
+       <div class="queue-done">${completedHtml}</div>
+     </div>`;
+  // Delivery mode
+  document.getElementById("ctl-queue-mode").addEventListener("change", async (e) => {
+    await api(`/api/sessions/${s.id}/queue-mode`, { mode: e.target.value });
+    lastQueueSig = null; pollFleet();
+  });
+  // Move up/down
+  for (const btn of rbQueueEl.querySelectorAll(".queue-up, .queue-dn")) {
+    btn.addEventListener("click", async () => {
+      const from = parseInt(btn.dataset.from, 10), to = parseInt(btn.dataset.to, 10);
+      await api(`/api/sessions/${s.id}/queue-move`, { from, to });
+      lastQueueSig = null; pollFleet();
+    });
+  }
+  // Remove
+  for (const btn of rbQueueEl.querySelectorAll(".queue-del")) {
+    btn.addEventListener("click", async () => {
+      const idx = parseInt(btn.dataset.idx, 10);
+      await api(`/api/sessions/${s.id}/queue-remove`, { index: idx });
+      lastQueueSig = null; pollFleet();
+    });
+  }
+  // Retry checkbox
+  const retryCb = document.getElementById("queue-retry-cb");
+  const retryN = document.getElementById("queue-retry-n");
+  if (retryCb && retryN) {
+    retryCb.addEventListener("change", () => { retryN.disabled = !retryCb.checked; });
+  }
+  // Add
+  document.getElementById("queue-add-btn").addEventListener("click", async () => {
+    const text = (document.getElementById("queue-add-text").value || "").trim();
+    if (!text) return;
+    const retryOn = retryCb && retryCb.checked;
+    const maxRetries = retryOn && retryN ? Math.max(1, parseInt(retryN.value, 10) || 3) : 0;
+    const pattern = (document.getElementById("queue-pattern").value || "").trim() || null;
+    await api(`/api/sessions/${s.id}/queue-add`, { text, maxRetries, successPattern: pattern });
+    document.getElementById("queue-add-text").value = "";
+    document.getElementById("queue-pattern").value = "";
+    if (retryCb) retryCb.checked = false;
+    if (retryN) retryN.disabled = true;
+    lastQueueSig = null; pollFleet();
+  });
+  // Clear all
+  document.getElementById("queue-clear-btn").addEventListener("click", async () => {
+    if (!confirm("Clear all queued tasks?")) return;
+    await api(`/api/sessions/${s.id}/queue-clear`);
+    lastQueueSig = null; pollFleet();
+  });
+}
+
+// ---- Send-to-session modal --------------------------------------------------
+
+function openSendToModal(fromId) {
+  const modal = el("send-to-modal");
+  if (!modal) return;
+  const sel = el("send-to-target");
+  if (!sel) return;
+  const others = (latest && latest.sessions || []).filter(x => x.id !== fromId);
+  sel.innerHTML = others.length
+    ? others.map(x => `<option value="${escapeHtml(x.id)}">${escapeHtml(x.label)}</option>`).join("")
+    : '<option value="">(no other sessions)</option>';
+  el("send-to-text").value = "";
+  modal.classList.remove("hidden");
+  modal._fromId = fromId;
+}
+
+el("send-to-cancel") && el("send-to-cancel").addEventListener("click", () => el("send-to-modal").classList.add("hidden"));
+el("send-to-send") && el("send-to-send").addEventListener("click", async () => {
+  const modal = el("send-to-modal");
+  const fromId = modal && modal._fromId;
+  const targetId = el("send-to-target") && el("send-to-target").value;
+  const text = el("send-to-text") && el("send-to-text").value.trim();
+  if (!fromId || !targetId || !text) return;
+  await api(`/api/sessions/${fromId}/send-to`, { targetId, text });
+  modal.classList.add("hidden");
+  pollFleet();
+  syncSession(fromId);
+});
+
+// ---- Schedule modal ---------------------------------------------------------
+
+el("btn-schedule") && el("btn-schedule").addEventListener("click", openScheduleModal);
+el("sched-cancel") && el("sched-cancel").addEventListener("click", () => el("schedule-modal").classList.add("hidden"));
+
+async function openScheduleModal() {
+  el("schedule-modal").classList.remove("hidden");
+  el("sched-fireat").value = "";
+  el("sched-cwd").value = "";
+  el("sched-label").value = "";
+  el("sched-prompt").value = "";
+  await renderScheduleList();
+}
+
+async function renderScheduleList() {
+  const listEl = el("sched-list");
+  if (!listEl) return;
+  const items = (latest && latest.schedule) || [];
+  if (!items.length) {
+    listEl.innerHTML = '<div class="rb-note">No scheduled sessions.</div>';
+    return;
+  }
+  listEl.innerHTML = items.map(item => {
+    const when = new Date(item.fireAt).toLocaleString();
+    return `<div class="sched-item">
+      <div class="sched-item-info">
+        <strong>${escapeHtml(item.label)}</strong>
+        <span class="sched-item-when">⏰ ${escapeHtml(when)}</span>
+      </div>
+      <button class="sched-cancel-btn" data-id="${escapeHtml(item.id)}">Cancel</button>
+    </div>`;
+  }).join("");
+  for (const btn of listEl.querySelectorAll(".sched-cancel-btn")) {
+    btn.addEventListener("click", async () => {
+      await fetch(`/api/schedule/${btn.dataset.id}`, { method: "DELETE", headers: { "x-fleet-token": TOKEN } });
+      await renderScheduleList();
+      pollFleet();
+    });
+  }
+}
+
+el("sched-create") && el("sched-create").addEventListener("click", async () => {
+  const fireAtStr = (el("sched-fireat").value || "").trim();
+  const cwd = (el("sched-cwd").value || "").trim();
+  const label = (el("sched-label").value || "").trim();
+  const prompt = (el("sched-prompt").value || "").trim();
+  if (!fireAtStr || !cwd) { alert("Fire-at time and working directory are required."); return; }
+  let fireAt;
+  const rel = fireAtStr.match(/^\+\s*(\d+(?:\.\d+)?)\s*([hm])$/i);
+  if (rel) {
+    fireAt = serverNow() + parseFloat(rel[1]) * (rel[2].toLowerCase() === "h" ? 3600000 : 60000);
+  } else {
+    fireAt = Date.parse(fireAtStr.replace(" ", "T"));
+    if (isNaN(fireAt)) { alert("Could not parse time. Use e.g. +2h or 2026-07-01T03:00"); return; }
+  }
+  if (fireAt <= serverNow()) { alert("Fire-at time must be in the future."); return; }
+  const modeEl = el("sched-mode");
+  await api("/api/schedule", { cwd, label: label || cwd, fireAt, mode: modeEl ? modeEl.value : "bypassPermissions", initialPrompt: prompt });
+  el("sched-fireat").value = "";
+  el("sched-cwd").value = "";
+  el("sched-label").value = "";
+  el("sched-prompt").value = "";
+  await renderScheduleList();
+  pollFleet();
+});
+
 function renderCommands() {
   if (!cmdListEl) return;
   const cmds = (latest && latest.commands) || [];
@@ -1865,9 +2144,11 @@ function setRightTab(tab) {
   el("rb-controls").classList.toggle("hidden", tab !== "controls");
   el("rb-intelligence").classList.toggle("hidden", tab !== "intelligence");
   el("rb-commands").classList.toggle("hidden", tab !== "commands");
+  if (el("rb-queue")) el("rb-queue").classList.toggle("hidden", tab !== "queue");
   if (tab === "controls") renderControls(latest && selectedId ? latest.sessions.find((x) => x.id === selectedId) : null);
   if (tab === "intelligence") renderIntelligence();
   if (tab === "commands") renderCommands();
+  if (tab === "queue") renderQueue();
 }
 for (const t of document.querySelectorAll(".rb-tab")) {
   t.addEventListener("click", () => setRightTab(t.dataset.tab));
